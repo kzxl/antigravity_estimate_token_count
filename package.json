@@ -105,6 +105,13 @@
           "minimum": 1000,
           "maximum": 60000,
           "description": "Polling interval in milliseconds for checking .pb file changes"
+        },
+        "tokenCount.pbInputRatio": {
+          "type": "number",
+          "default": 0.4,
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Ratio of PB estimated tokens to classify as input (the rest is output). Default 0.4 means 40% input / 60% output."
         }
       }
     }

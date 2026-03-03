@@ -457,12 +457,12 @@ export class DashboardPanel {
             <div class="card-sub">${currentTotals.output.toLocaleString()} tokens</div>
         </div>
         <div class="card total">
-            <div class="card-label">📊 Total Today (Manual)</div>
+            <div class="card-label">📊 Total Today</div>
             <div class="card-value">${formatTokenCount(currentTotals.total)}</div>
             <div class="card-sub">${currentTotals.total.toLocaleString()} tokens</div>
         </div>
         <div class="card alltime">
-            <div class="card-label">🏆 All Time (Manual)</div>
+            <div class="card-label">🏆 All Time</div>
             <div class="card-value">${formatTokenCount(allTimeTotals.total)}</div>
             <div class="card-sub">${allTimeTotals.input.toLocaleString()} ↑ / ${allTimeTotals.output.toLocaleString()} ↓</div>
         </div>

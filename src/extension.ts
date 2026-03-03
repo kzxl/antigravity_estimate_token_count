@@ -20,11 +20,22 @@ export function activate(context: vscode.ExtensionContext) {
         pbWatcher.start();
         context.subscriptions.push(pbWatcher);
 
-        // Log delta events
-        pbWatcher.onDeltaDetected(event => {
+        // Auto-feed PB delta events into session entries
+        pbWatcher.onDeltaDetected(async event => {
             console.log(
                 `[TokenCount] PB delta: ${event.conversationId.substring(0, 8)}... ` +
                 `+${event.deltaKB.toFixed(1)}KB (~${event.estimatedTokens} tokens)`
+            );
+
+            // Split PB tokens into input/output using configurable ratio
+            const pbConfig = vscode.workspace.getConfiguration('tokenCount');
+            const inputRatio = pbConfig.get<number>('pbInputRatio', 0.4);
+            const inputTokens = Math.round(event.estimatedTokens * inputRatio);
+            const outputTokens = event.estimatedTokens - inputTokens;
+
+            await sessionManager.addEntry(
+                inputTokens, outputTokens, 'antigravity',
+                `Auto: ${event.conversationId.substring(0, 8)}… +${event.deltaKB.toFixed(1)}KB`
             );
         });
     }
