@@ -1,0 +1,124 @@
+{
+  "name": "ai-token-counter",
+  "displayName": "AI Token Counter",
+  "description": "Track and count AI tokens used with Copilot, Antigravity, and other AI assistants",
+  "version": "1.0.0",
+  "publisher": "phongvo",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "token",
+    "counter",
+    "ai",
+    "copilot",
+    "antigravity",
+    "usage",
+    "tracker"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "tokenCount.showDashboard",
+        "title": "Token Count: Show Dashboard",
+        "icon": "$(graph)"
+      },
+      {
+        "command": "tokenCount.countSelection",
+        "title": "Token Count: Count Selected Text"
+      },
+      {
+        "command": "tokenCount.addManualEntry",
+        "title": "Token Count: Add Manual Entry"
+      },
+      {
+        "command": "tokenCount.resetSession",
+        "title": "Token Count: Reset Current Session"
+      },
+      {
+        "command": "tokenCount.resetAll",
+        "title": "Token Count: Reset All Data"
+      },
+      {
+        "command": "tokenCount.exportData",
+        "title": "Token Count: Export Data (JSON)"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "tokenCount.countSelection",
+        "key": "ctrl+shift+t",
+        "when": "editorHasSelection"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "tokenCount.countSelection",
+          "when": "editorHasSelection",
+          "group": "1_tokenCount"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "AI Token Counter",
+      "properties": {
+        "tokenCount.showInStatusBar": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show token count in the status bar"
+        },
+        "tokenCount.statusBarAlignment": {
+          "type": "string",
+          "enum": [
+            "left",
+            "right"
+          ],
+          "default": "right",
+          "description": "Status bar alignment"
+        },
+        "tokenCount.autoNewSessionDaily": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically create a new session each day"
+        },
+        "tokenCount.pbWatcherEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable automatic token tracking via Antigravity .pb conversation files"
+        },
+        "tokenCount.tokensPerKB": {
+          "type": "number",
+          "default": 200,
+          "description": "Estimated tokens per KB of .pb file size change (for auto-tracking)"
+        },
+        "tokenCount.pbPollingIntervalMs": {
+          "type": "number",
+          "default": 5000,
+          "minimum": 1000,
+          "maximum": 60000,
+          "description": "Polling interval in milliseconds for checking .pb file changes"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "lint": "eslint src --ext ts",
+    "package": "npx vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.3.3"
+  }
+}
