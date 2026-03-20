@@ -3,11 +3,13 @@ import { SessionManager } from './sessionManager';
 import { StatusBarManager } from './statusBar';
 import { DashboardPanel } from './dashboard';
 import { PbWatcher } from './pbWatcher';
+import { ConversionTracker } from './conversionTracker';
 import { countTokens } from './tokenizer';
 
 let sessionManager: SessionManager;
 let statusBarManager: StatusBarManager;
 let pbWatcher: PbWatcher | undefined;
+let conversionTracker: ConversionTracker | undefined;
 
 export function activate(context: vscode.ExtensionContext) {
     // Initialize core services
@@ -27,6 +29,9 @@ export function activate(context: vscode.ExtensionContext) {
                 `+${event.deltaKB.toFixed(1)}KB (~${event.estimatedTokens} tokens)`
             );
 
+            // Log to conversion tracker
+            conversionTracker?.logConversion(event);
+
             // Split PB tokens into input/output using configurable ratio
             const pbConfig = vscode.workspace.getConfiguration('tokenCount');
             const inputRatio = pbConfig.get<number>('pbInputRatio', 0.4);
@@ -40,6 +45,10 @@ export function activate(context: vscode.ExtensionContext) {
         });
     }
 
+    // Initialize conversion tracker
+    conversionTracker = new ConversionTracker();
+    context.subscriptions.push(conversionTracker);
+
     // Initialize status bar (with optional PB watcher)
     statusBarManager = new StatusBarManager(sessionManager, pbWatcher);
 
@@ -49,7 +58,7 @@ export function activate(context: vscode.ExtensionContext) {
     // Command: Show Dashboard
     context.subscriptions.push(
         vscode.commands.registerCommand('tokenCount.showDashboard', () => {
-            DashboardPanel.createOrShow(context.extensionUri, sessionManager, pbWatcher);
+            DashboardPanel.createOrShow(context.extensionUri, sessionManager, pbWatcher, conversionTracker);
         })
     );
 

@@ -96,8 +96,8 @@
         },
         "tokenCount.tokensPerKB": {
           "type": "number",
-          "default": 200,
-          "description": "Estimated tokens per KB of .pb file size change (for auto-tracking)"
+          "default": 75,
+          "description": "Estimated tokens per KB of .pb file size change (for auto-tracking). Calibrated from protobuf overhead analysis."
         },
         "tokenCount.pbPollingIntervalMs": {
           "type": "number",
@@ -112,6 +112,16 @@
           "minimum": 0,
           "maximum": 1,
           "description": "Ratio of PB estimated tokens to classify as input (the rest is output). Default 0.4 means 40% input / 60% output."
+        },
+        "tokenCount.conversionLogEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable logging each PB delta event to a JSONL file for measurement and analysis"
+        },
+        "tokenCount.conversionLogPath": {
+          "type": "string",
+          "default": "",
+          "description": "Custom path for the conversion log JSONL file. Leave empty to use default (~/.gemini/antigravity/token-conversion-log.jsonl)"
         }
       }
     }

@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { SessionManager, TokenSession } from './sessionManager';
 import { formatTokenCount } from './tokenizer';
 import { PbWatcher } from './pbWatcher';
+import { ConversionTracker, ConversionLogEntry, ConversionStats } from './conversionTracker';
 
 export class DashboardPanel {
     public static currentPanel: DashboardPanel | undefined;
@@ -15,6 +16,7 @@ export class DashboardPanel {
         extensionUri: vscode.Uri,
         sessionManager: SessionManager,
         pbWatcher?: PbWatcher,
+        conversionTracker?: ConversionTracker,
     ): void {
         const column = vscode.window.activeTextEditor
             ? vscode.window.activeTextEditor.viewColumn
@@ -22,7 +24,7 @@ export class DashboardPanel {
 
         if (DashboardPanel.currentPanel) {
             DashboardPanel.currentPanel.panel.reveal(column);
-            DashboardPanel.currentPanel.updateContent(sessionManager, pbWatcher);
+            DashboardPanel.currentPanel.updateContent(sessionManager, pbWatcher, conversionTracker);
             return;
         }
 
@@ -36,7 +38,7 @@ export class DashboardPanel {
             }
         );
 
-        DashboardPanel.currentPanel = new DashboardPanel(panel, extensionUri, sessionManager, pbWatcher);
+        DashboardPanel.currentPanel = new DashboardPanel(panel, extensionUri, sessionManager, pbWatcher, conversionTracker);
     }
 
     private constructor(
@@ -44,21 +46,22 @@ export class DashboardPanel {
         extensionUri: vscode.Uri,
         sessionManager: SessionManager,
         pbWatcher?: PbWatcher,
+        conversionTracker?: ConversionTracker,
     ) {
         this.panel = panel;
         this.extensionUri = extensionUri;
 
-        this.updateContent(sessionManager, pbWatcher);
+        this.updateContent(sessionManager, pbWatcher, conversionTracker);
 
         // Listen for data changes
         this.disposables.push(
-            sessionManager.onDidChange(() => this.updateContent(sessionManager, pbWatcher))
+            sessionManager.onDidChange(() => this.updateContent(sessionManager, pbWatcher, conversionTracker))
         );
 
         // Listen for PB tracking updates
         if (pbWatcher) {
             this.disposables.push(
-                pbWatcher.onTrackingUpdate(() => this.updateContent(sessionManager, pbWatcher))
+                pbWatcher.onTrackingUpdate(() => this.updateContent(sessionManager, pbWatcher, conversionTracker))
             );
         }
 
@@ -102,13 +105,21 @@ export class DashboardPanel {
         );
     }
 
-    private updateContent(sessionManager: SessionManager, pbWatcher?: PbWatcher): void {
+    private async updateContent(sessionManager: SessionManager, pbWatcher?: PbWatcher, conversionTracker?: ConversionTracker): Promise<void> {
         const sessions = sessionManager.getAllSessions();
         const currentTotals = sessionManager.getCurrentTotals();
         const allTimeTotals = sessionManager.getAllTimeTotals();
         const pbData = pbWatcher?.getTrackingData();
 
-        this.panel.webview.html = this.getHtmlContent(sessions, currentTotals, allTimeTotals, pbData);
+        // Load conversion data asynchronously
+        let conversionEntries: ConversionLogEntry[] = [];
+        let conversionStats: ConversionStats | undefined;
+        if (conversionTracker) {
+            conversionEntries = await conversionTracker.getRecentConversions(50);
+            conversionStats = await conversionTracker.getConversionStats();
+        }
+
+        this.panel.webview.html = this.getHtmlContent(sessions, currentTotals, allTimeTotals, pbData, conversionEntries, conversionStats);
     }
 
     private getHtmlContent(
@@ -116,6 +127,8 @@ export class DashboardPanel {
         currentTotals: { input: number; output: number; total: number },
         allTimeTotals: { input: number; output: number; total: number },
         pbData?: { totalDeltaKB: number; totalEstimatedTokens: number; activeConversations: number; lastUpdate: number },
+        conversionEntries: ConversionLogEntry[] = [],
+        conversionStats?: ConversionStats,
     ): string {
         // Prepare chart data (last 14 days)
         const last14Days = this.getLast14DaysData(sessions);
@@ -406,7 +419,14 @@ export class DashboardPanel {
         }
 
         .tab-content { display: none; }
-        .tab-content.active { display: block; }
+        .tab-content.active { display: block; max-height: 400px; overflow-y: auto; }
+
+        .tab-content.active thead th {
+            position: sticky;
+            top: 0;
+            background: var(--bg-secondary);
+            z-index: 1;
+        }
 
         /* Scrollbar */
         ::-webkit-scrollbar { width: 8px; }
@@ -479,6 +499,7 @@ export class DashboardPanel {
         <div class="tabs">
             <div class="tab active" onclick="switchTab('entries')">📝 Today's Entries</div>
             <div class="tab" onclick="switchTab('history')">📅 Session History</div>
+            <div class="tab" onclick="switchTab('conversions')">📊 Conversion Log</div>
         </div>
 
         <div id="tab-entries" class="tab-content active">
@@ -511,6 +532,60 @@ export class DashboardPanel {
                 </thead>
                 <tbody>
                     ${sessionRows || '<tr><td colspan="5" class="empty">No session history yet.</td></tr>'}
+                </tbody>
+            </table>
+        </div>
+
+        <div id="tab-conversions" class="tab-content">
+            ${conversionStats && conversionStats.totalEvents > 0 ? `
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 16px;">
+                <div style="background: var(--bg-tertiary); padding: 12px; border-radius: 8px; text-align: center;">
+                    <div style="font-size: 11px; color: var(--text-secondary); text-transform: uppercase;">Total Events</div>
+                    <div style="font-size: 20px; font-weight: 700; color: var(--accent-blue);">${conversionStats.totalEvents}</div>
+                </div>
+                <div style="background: var(--bg-tertiary); padding: 12px; border-radius: 8px; text-align: center;">
+                    <div style="font-size: 11px; color: var(--text-secondary); text-transform: uppercase;">Total ΔKB</div>
+                    <div style="font-size: 20px; font-weight: 700; color: var(--accent-green);">${conversionStats.totalDeltaKB.toFixed(1)}</div>
+                </div>
+                <div style="background: var(--bg-tertiary); padding: 12px; border-radius: 8px; text-align: center;">
+                    <div style="font-size: 11px; color: var(--text-secondary); text-transform: uppercase;">Total Tokens</div>
+                    <div style="font-size: 20px; font-weight: 700; color: var(--accent-purple);">${conversionStats.totalEstimatedTokens.toLocaleString()}</div>
+                </div>
+                <div style="background: var(--bg-tertiary); padding: 12px; border-radius: 8px; text-align: center;">
+                    <div style="font-size: 11px; color: var(--text-secondary); text-transform: uppercase;">Avg ΔKB/Event</div>
+                    <div style="font-size: 20px; font-weight: 700; color: var(--accent-orange);">${conversionStats.avgDeltaKBPerEvent.toFixed(1)}</div>
+                </div>
+                <div style="background: var(--bg-tertiary); padding: 12px; border-radius: 8px; text-align: center;">
+                    <div style="font-size: 11px; color: var(--text-secondary); text-transform: uppercase;">Conversations</div>
+                    <div style="font-size: 20px; font-weight: 700; color: var(--text-primary);">${conversionStats.uniqueConversations}</div>
+                </div>
+            </div>
+            ` : ''}
+            <table>
+                <thead>
+                    <tr>
+                        <th>Time</th>
+                        <th>Conversation</th>
+                        <th class="num">ΔKB</th>
+                        <th class="num">Est. Tokens</th>
+                        <th class="num">Tok/KB</th>
+                        <th class="num">PB Total KB</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${conversionEntries.length === 0
+                        ? '<tr><td colspan="6" class="empty">No conversion events logged yet. Events appear when PB file changes are detected.</td></tr>'
+                        : [...conversionEntries].reverse().map(e => `
+                            <tr>
+                                <td>${new Date(e.ts).toLocaleTimeString()}</td>
+                                <td><span class="badge badge-antigravity">${e.convId.substring(0, 8)}…</span></td>
+                                <td class="num">+${e.deltaKB.toFixed(1)}</td>
+                                <td class="num">${e.estimatedTokens.toLocaleString()}</td>
+                                <td class="num">${e.tokensPerKB}</td>
+                                <td class="num">${e.pbTotalKB.toFixed(1)}</td>
+                            </tr>
+                        `).join('')
+                    }
                 </tbody>
             </table>
         </div>
