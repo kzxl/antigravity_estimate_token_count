@@ -79,7 +79,7 @@ export class StatusBarManager {
 
         // Build tooltip
         const config = vscode.workspace.getConfiguration('tokenCount');
-        const tokensPerKB = config.get<number>('tokensPerKB', 200);
+        const tokensPerKB = config.get<number>('tokensPerKB', 256);
 
         let tooltipLines = [`**AI Token Counter**\n`];
 

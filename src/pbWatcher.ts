@@ -115,7 +115,7 @@ export class PbWatcher implements vscode.Disposable {
         try {
             const files = await fs.promises.readdir(this.conversationsDir);
             const config = vscode.workspace.getConfiguration('tokenCount');
-            const tokensPerKB = config.get<number>('tokensPerKB', 200);
+            const tokensPerKB = config.get<number>('tokensPerKB', 256);
 
             for (const file of files) {
                 if (!file.endsWith('.pb')) { continue; }
@@ -178,7 +178,7 @@ export class PbWatcher implements vscode.Disposable {
     /** Get current tracking data */
     public getTrackingData(): PbTrackingData {
         const config = vscode.workspace.getConfiguration('tokenCount');
-        const tokensPerKB = config.get<number>('tokensPerKB', 200);
+        const tokensPerKB = config.get<number>('tokensPerKB', 256);
         const totalDeltaKB = Math.round((this.totalDeltaBytes / 1024) * 10) / 10;
 
         return {
@@ -199,7 +199,7 @@ export class PbWatcher implements vscode.Disposable {
         await this.snapshotAllFiles();
 
         const config = vscode.workspace.getConfiguration('tokenCount');
-        const tokensPerKB = config.get<number>('tokensPerKB', 200);
+        const tokensPerKB = config.get<number>('tokensPerKB', 256);
         this.emitTrackingUpdate(tokensPerKB);
     }
 

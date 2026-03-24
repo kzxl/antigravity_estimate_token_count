@@ -53,7 +53,7 @@ export class ConversionTracker implements vscode.Disposable {
             return;
         }
 
-        const tokensPerKB = config.get<number>('tokensPerKB', 75);
+        const tokensPerKB = config.get<number>('tokensPerKB', 256);
         const entry: ConversionLogEntry = {
             ts: new Date(event.timestamp).toISOString(),
             convId: event.conversationId,
