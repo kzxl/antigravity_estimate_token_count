@@ -40,8 +40,9 @@ export class ConversionTracker implements vscode.Disposable {
         if (customPath) {
             this.logFilePath = customPath;
         } else {
+            // Antigravity (new versions) uses antigravity-ide directory
             this.logFilePath = path.join(
-                os.homedir(), '.gemini', 'antigravity', 'token-conversion-log.jsonl'
+                os.homedir(), '.gemini', 'antigravity-ide', 'token-conversion-log.jsonl'
             );
         }
     }
@@ -126,6 +127,36 @@ export class ConversionTracker implements vscode.Disposable {
             avgTokensPerEvent: Math.round(totalEstimatedTokens / entries.length),
             uniqueConversations: uniqueConvIds.size,
         };
+    }
+
+    /** Get total estimated tokens from log for today (UTC date) */
+    public async getTodayTokensFromLog(): Promise<{ tokens: number; events: number; deltaKB: number }> {
+        try {
+            const todayUtc = new Date().toISOString().slice(0, 10); // e.g. "2026-05-20"
+            const content = await fs.promises.readFile(this.logFilePath, 'utf-8');
+            const lines = content.trim().split('\n').filter(l => l.length > 0);
+
+            let tokens = 0;
+            let events = 0;
+            let deltaKB = 0;
+
+            for (const line of lines) {
+                try {
+                    const entry: ConversionLogEntry = JSON.parse(line);
+                    if (entry.ts && entry.ts.startsWith(todayUtc)) {
+                        tokens += entry.estimatedTokens;
+                        deltaKB += entry.deltaKB;
+                        events++;
+                    }
+                } catch {
+                    // skip malformed
+                }
+            }
+
+            return { tokens, events, deltaKB: Math.round(deltaKB * 10) / 10 };
+        } catch {
+            return { tokens: 0, events: 0, deltaKB: 0 };
+        }
     }
 
     public dispose(): void {

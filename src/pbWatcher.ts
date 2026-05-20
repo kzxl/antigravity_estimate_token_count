@@ -64,8 +64,8 @@ export class PbWatcher implements vscode.Disposable {
     public readonly onTrackingUpdate = this.onTrackingUpdateEmitter.event;
 
     constructor() {
-        // Antigravity stores conversations at ~/.gemini/antigravity/conversations/
-        this.conversationsDir = path.join(os.homedir(), '.gemini', 'antigravity', 'conversations');
+        // Antigravity (new versions) stores conversations at ~/.gemini/antigravity-ide/conversations/
+        this.conversationsDir = path.join(os.homedir(), '.gemini', 'antigravity-ide', 'conversations');
     }
 
     /** Start watching for .pb file changes */

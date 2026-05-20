@@ -3,6 +3,7 @@ import { SessionManager, TokenSession } from './sessionManager';
 import { formatTokenCount } from './tokenizer';
 import { PbWatcher } from './pbWatcher';
 import { ConversionTracker, ConversionLogEntry, ConversionStats } from './conversionTracker';
+import { QuotaFetcher, QuotaData } from './quotaFetcher';
 
 export class DashboardPanel {
     public static currentPanel: DashboardPanel | undefined;
@@ -17,6 +18,7 @@ export class DashboardPanel {
         sessionManager: SessionManager,
         pbWatcher?: PbWatcher,
         conversionTracker?: ConversionTracker,
+        quotaFetcher?: QuotaFetcher,
     ): void {
         const column = vscode.window.activeTextEditor
             ? vscode.window.activeTextEditor.viewColumn
@@ -24,7 +26,7 @@ export class DashboardPanel {
 
         if (DashboardPanel.currentPanel) {
             DashboardPanel.currentPanel.panel.reveal(column);
-            DashboardPanel.currentPanel.updateContent(sessionManager, pbWatcher, conversionTracker);
+            DashboardPanel.currentPanel.updateContent(sessionManager, pbWatcher, conversionTracker, quotaFetcher);
             return;
         }
 
@@ -38,7 +40,19 @@ export class DashboardPanel {
             }
         );
 
-        DashboardPanel.currentPanel = new DashboardPanel(panel, extensionUri, sessionManager, pbWatcher, conversionTracker);
+        DashboardPanel.currentPanel = new DashboardPanel(panel, extensionUri, sessionManager, pbWatcher, conversionTracker, quotaFetcher);
+    }
+
+    /** Refresh dashboard nếu đang mở (dùng khi quota update từ background) */
+    public static refresh(
+        sessionManager: SessionManager,
+        pbWatcher?: PbWatcher,
+        conversionTracker?: ConversionTracker,
+        quotaFetcher?: QuotaFetcher,
+    ): void {
+        if (DashboardPanel.currentPanel) {
+            DashboardPanel.currentPanel.updateContent(sessionManager, pbWatcher, conversionTracker, quotaFetcher);
+        }
     }
 
     private constructor(
@@ -47,21 +61,22 @@ export class DashboardPanel {
         sessionManager: SessionManager,
         pbWatcher?: PbWatcher,
         conversionTracker?: ConversionTracker,
+        quotaFetcher?: QuotaFetcher,
     ) {
         this.panel = panel;
         this.extensionUri = extensionUri;
 
-        this.updateContent(sessionManager, pbWatcher, conversionTracker);
+        this.updateContent(sessionManager, pbWatcher, conversionTracker, quotaFetcher);
 
         // Listen for data changes
         this.disposables.push(
-            sessionManager.onDidChange(() => this.updateContent(sessionManager, pbWatcher, conversionTracker))
+            sessionManager.onDidChange(() => this.updateContent(sessionManager, pbWatcher, conversionTracker, quotaFetcher))
         );
 
         // Listen for PB tracking updates
         if (pbWatcher) {
             this.disposables.push(
-                pbWatcher.onTrackingUpdate(() => this.updateContent(sessionManager, pbWatcher, conversionTracker))
+                pbWatcher.onTrackingUpdate(() => this.updateContent(sessionManager, pbWatcher, conversionTracker, quotaFetcher))
             );
         }
 
@@ -105,21 +120,29 @@ export class DashboardPanel {
         );
     }
 
-    private async updateContent(sessionManager: SessionManager, pbWatcher?: PbWatcher, conversionTracker?: ConversionTracker): Promise<void> {
+    private async updateContent(
+        sessionManager: SessionManager,
+        pbWatcher?: PbWatcher,
+        conversionTracker?: ConversionTracker,
+        quotaFetcher?: QuotaFetcher,
+    ): Promise<void> {
         const sessions = sessionManager.getAllSessions();
         const currentTotals = sessionManager.getCurrentTotals();
         const allTimeTotals = sessionManager.getAllTimeTotals();
         const pbData = pbWatcher?.getTrackingData();
+        const quotaData = quotaFetcher?.getData();
 
         // Load conversion data asynchronously
         let conversionEntries: ConversionLogEntry[] = [];
         let conversionStats: ConversionStats | undefined;
+        let todayLog: { tokens: number; events: number; deltaKB: number } | undefined;
         if (conversionTracker) {
             conversionEntries = await conversionTracker.getRecentConversions(50);
             conversionStats = await conversionTracker.getConversionStats();
+            todayLog = await conversionTracker.getTodayTokensFromLog();
         }
 
-        this.panel.webview.html = this.getHtmlContent(sessions, currentTotals, allTimeTotals, pbData, conversionEntries, conversionStats);
+        this.panel.webview.html = this.getHtmlContent(sessions, currentTotals, allTimeTotals, pbData, conversionEntries, conversionStats, todayLog, quotaData);
     }
 
     private getHtmlContent(
@@ -129,6 +152,8 @@ export class DashboardPanel {
         pbData?: { totalDeltaKB: number; totalEstimatedTokens: number; activeConversations: number; lastUpdate: number },
         conversionEntries: ConversionLogEntry[] = [],
         conversionStats?: ConversionStats,
+        todayLog?: { tokens: number; events: number; deltaKB: number },
+        quotaData?: QuotaData,
     ): string {
         // Prepare chart data (last 14 days)
         const last14Days = this.getLast14DaysData(sessions);
@@ -288,6 +313,7 @@ export class DashboardPanel {
         .card.output::before { background: var(--gradient-green); }
         .card.total::before { background: var(--gradient-purple); }
         .card.alltime::before { background: linear-gradient(135deg, var(--accent-orange), #f0883e); }
+        .card.quota::before { background: linear-gradient(135deg, #00b4d8, #90e0ef); }
 
         .card-label {
             font-size: 12px;
@@ -418,247 +444,368 @@ export class DashboardPanel {
             border-bottom-color: var(--accent-blue);
         }
 
-        .tab-content { display: none; }
-        .tab-content.active { display: block; max-height: 400px; overflow-y: auto; }
+            display: inline-flex;
+            align-items: center;
+            padding: 2px 7px;
+            border-radius: 20px;
+            font-size: 10px;
+            font-weight: 600;
+            letter-spacing: 0.2px;
+        }
+        .badge-manual    { background: var(--purple-dim); color: var(--purple); }
+        .badge-selection { background: var(--blue-dim);   color: var(--blue); }
+        .badge-copilot   { background: var(--green-dim);  color: var(--green); }
+        .badge-antigravity { background: var(--amber-dim); color: var(--amber); }
 
-        .tab-content.active thead th {
-            position: sticky;
-            top: 0;
-            background: var(--bg-secondary);
-            z-index: 1;
+        /* ── Conversion mini stats ── */
+        .mini-stats {
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 8px;
+            margin-bottom: 14px;
+        }
+        .mini-stat {
+            background: var(--bg-4);
+            border-radius: var(--radius-sm);
+            padding: 10px 12px;
+            text-align: center;
+        }
+        .mini-stat-label {
+            font-size: 9px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-3);
+            margin-bottom: 4px;
+        }
+        .mini-stat-value {
+            font-size: 18px;
+            font-weight: 700;
+            font-variant-numeric: tabular-nums;
         }
 
-        /* Scrollbar */
-        ::-webkit-scrollbar { width: 8px; }
-        ::-webkit-scrollbar-track { background: var(--bg-primary); }
-        ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
-        ::-webkit-scrollbar-thumb:hover { background: var(--text-secondary); }
+        /* ── Scrollbar ── */
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: var(--border-bright); border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
 
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(10px); }
-            to { opacity: 1; transform: translateY(0); }
+        /* ── Animations ── */
+        @keyframes fadeUp {
+            from { opacity: 0; transform: translateY(8px); }
+            to   { opacity: 1; transform: translateY(0); }
         }
-
-        .card, .section {
-            animation: fadeIn 0.3s ease-out;
-        }
-
-        .card:nth-child(2) { animation-delay: 0.05s; }
-        .card:nth-child(3) { animation-delay: 0.1s; }
-        .card:nth-child(4) { animation-delay: 0.15s; }
+        .quota-card { animation: fadeUp 0.25s ease both; }
+        .stats-row  { animation: fadeUp 0.3s 0.05s ease both; }
+        .section    { animation: fadeUp 0.3s 0.1s ease both; }
     </style>
 </head>
 <body>
-    <div class="header">
-        <h1>⚡ AI Token Counter</h1>
-        <div class="header-actions">
-            <button class="btn btn-primary" onclick="exportData()">📤 Export</button>
-            <button class="btn" onclick="resetSession()">🔄 Reset Session</button>
-            <button class="btn btn-danger" onclick="resetAll()">🗑 Reset All</button>
+<div class="app">
+
+    <!-- Topbar -->
+    <div class="topbar">
+        <div class="logo">
+            <span class="logo-icon">⚡</span>
+            AI Token Counter
+        </div>
+        <div class="topbar-right">
+            <button class="btn btn-primary" onclick="exportData()">↑ Export</button>
+            <button class="btn" onclick="resetSession()">↺ Reset Session</button>
+            <button class="btn btn-danger" onclick="resetAll()">✕ Reset All</button>
         </div>
     </div>
 
-    <div class="summary-grid">
-        ${pbData ? `
-        <div class="card total" style="grid-column: span 2;">
-            <div class="card-label">🔤 Auto-Track (Antigravity PB)</div>
-            <div class="card-value">+${pbData.totalDeltaKB.toFixed(1)} KB</div>
-            <div class="card-sub">~${formatTokenCount(pbData.totalEstimatedTokens)} estimated tokens · ${pbData.activeConversations} conversation(s)</div>
-        </div>
-        ` : ''}
-        <div class="card input">
-            <div class="card-label">↑ Input (Sent Today)</div>
-            <div class="card-value">${formatTokenCount(currentTotals.input)}</div>
-            <div class="card-sub">${currentTotals.input.toLocaleString()} tokens</div>
-        </div>
-        <div class="card output">
-            <div class="card-label">↓ Output (Received Today)</div>
-            <div class="card-value">${formatTokenCount(currentTotals.output)}</div>
-            <div class="card-sub">${currentTotals.output.toLocaleString()} tokens</div>
-        </div>
-        <div class="card total">
-            <div class="card-label">📊 Total Today</div>
-            <div class="card-value">${formatTokenCount(currentTotals.total)}</div>
-            <div class="card-sub">${currentTotals.total.toLocaleString()} tokens</div>
-        </div>
-        <div class="card alltime">
-            <div class="card-label">🏆 All Time</div>
-            <div class="card-value">${formatTokenCount(allTimeTotals.total)}</div>
-            <div class="card-sub">${allTimeTotals.input.toLocaleString()} ↑ / ${allTimeTotals.output.toLocaleString()} ↓</div>
-        </div>
-    </div>
+    <div class="content">
 
-    <div class="section">
-        <h2>📈 Token Usage (Last 14 Days)</h2>
-        <div class="chart-container">
-            <canvas id="usageChart"></canvas>
-        </div>
-    </div>
+        <!-- Quota Card -->
+        ${(() => {
+            const getModelColor = (label: string): string => {
+                const l = label.toLowerCase();
+                if (l.includes('flash') || l.includes('gemini 3.5')) { return '#34d399'; }
+                if (l.includes('gemini')) { return '#4f8ef7'; }
+                if (l.includes('claude sonnet')) { return '#f59e0b'; }
+                if (l.includes('claude opus')) { return '#a78bfa'; }
+                if (l.includes('claude')) { return '#f59e0b'; }
+                if (l.includes('gpt') || l.includes('openai')) { return '#22d3ee'; }
+                return '#8892a4';
+            };
 
-    <div class="section">
-        <div class="tabs">
-            <div class="tab active" onclick="switchTab('entries')">📝 Today's Entries</div>
-            <div class="tab" onclick="switchTab('history')">📅 Session History</div>
-            <div class="tab" onclick="switchTab('conversions')">📊 Conversion Log</div>
-        </div>
+            if (quotaData && quotaData.models.length > 0) {
+                const fetchedAgo = Math.round((Date.now() - quotaData.fetchedAt) / 1000);
+                const agoStr = fetchedAgo < 60 ? `${fetchedAgo}s ago` : `${Math.round(fetchedAgo/60)}m ago`;
+                const modelBars = quotaData.models.map(m => {
+                    const usedPct = (1 - Math.max(0, Math.min(1, m.remainingFraction))) * 100;
+                    const color = getModelColor(m.label);
+                    const barColor = usedPct >= 85 ? '#f87171' : usedPct >= 60 ? '#fbbf24' : color;
+                    const resetDate = new Date(m.resetTime);
+                    const resetStr = resetDate.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+                    const pctStr = usedPct < 0.1 ? '0' : usedPct.toFixed(usedPct < 1 ? 1 : 0);
+                    return `
+                    <div class="quota-row">
+                        <div class="quota-model" title="${m.label}">${m.label}</div>
+                        <div class="quota-bar-wrap">
+                            <div class="quota-bar-fill" style="width:${usedPct}%;background:${barColor};"></div>
+                        </div>
+                        <div class="quota-pct" style="color:${barColor};">${pctStr}%<span style="color:var(--text-3);font-size:9px;font-weight:400;"> used</span></div>
+                    </div>`;
+                }).join('');
+                return `
+        <div class="quota-card">
+            <div class="quota-header">
+                <span class="quota-title">⚡ Quota Thực Tế — Antigravity</span>
+                <span class="quota-badge">Live · ${agoStr}</span>
+            </div>
+            <div class="quota-grid">${modelBars}</div>
+        </div>`;
 
-        <div id="tab-entries" class="tab-content active">
-            <table>
-                <thead>
-                    <tr>
-                        <th>Time</th>
-                        <th>Provider</th>
-                        <th class="num">Input</th>
-                        <th class="num">Output</th>
-                        <th>Description</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    ${entriesHtml}
-                </tbody>
-            </table>
-        </div>
+            } else if (todayLog && todayLog.events > 0) {
+                const tokens = todayLog.tokens;
+                const LIMITS = [
+                    { name: 'Gemini 2.5 Pro', limit: 1_048_576, color: '#4f8ef7' },
+                    { name: 'Claude Sonnet',  limit: 200_000,   color: '#f59e0b' },
+                    { name: 'GPT-4o',         limit: 128_000,   color: '#22d3ee' },
+                ];
+                const modelBars = LIMITS.map(m => {
+                    const pct = Math.min(100, (tokens / m.limit) * 100);
+                    const limitStr = m.limit >= 1_000_000 ? `${(m.limit/1_000_000).toFixed(1)}M` : `${(m.limit/1_000).toFixed(0)}K`;
+                    return `
+                    <div class="quota-row">
+                        <div class="quota-model">${m.name}</div>
+                        <div class="quota-bar-wrap">
+                            <div class="quota-bar-fill" style="width:${pct}%;background:${m.color};"></div>
+                        </div>
+                        <div class="quota-pct" style="color:${m.color};">${pct.toFixed(pct<1?2:1)}%<span style="color:var(--text-3);font-size:9px;font-weight:400;">/${limitStr}</span></div>
+                    </div>`;
+                }).join('');
+                return `
+        <div class="quota-card">
+            <div class="quota-header">
+                <span class="quota-title">📡 Token Hôm Nay (ước tính)</span>
+                <span class="quota-badge">${formatTokenCount(tokens)} · ${todayLog.events} events</span>
+            </div>
+            <div class="quota-grid">${modelBars}</div>
+        </div>`;
+            } else {
+                return `
+        <div class="quota-card" style="opacity:0.5;">
+            <div class="quota-header">
+                <span class="quota-title">📡 Quota</span>
+            </div>
+            <div class="quota-empty">Đang tải dữ liệu quota từ Antigravity API...</div>
+        </div>`;
+            }
+        })()}
 
-        <div id="tab-history" class="tab-content">
-            <table>
-                <thead>
-                    <tr>
-                        <th>Date</th>
-                        <th class="num">Input</th>
-                        <th class="num">Output</th>
-                        <th class="num">Total</th>
-                        <th class="num">Entries</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    ${sessionRows || '<tr><td colspan="5" class="empty">No session history yet.</td></tr>'}
-                </tbody>
-            </table>
-        </div>
-
-        <div id="tab-conversions" class="tab-content">
-            ${conversionStats && conversionStats.totalEvents > 0 ? `
-            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 16px;">
-                <div style="background: var(--bg-tertiary); padding: 12px; border-radius: 8px; text-align: center;">
-                    <div style="font-size: 11px; color: var(--text-secondary); text-transform: uppercase;">Total Events</div>
-                    <div style="font-size: 20px; font-weight: 700; color: var(--accent-blue);">${conversionStats.totalEvents}</div>
+        <!-- Stats row -->
+        <div class="stats-row">
+            ${pbData ? `
+            <div class="stat-card pb-card">
+                <div class="pb-icon">🔤</div>
+                <div>
+                    <div class="stat-label">Auto-Track (PB phiên này)</div>
+                    <div class="stat-value" style="color:var(--purple);font-size:22px;">+${pbData.totalDeltaKB.toFixed(1)} KB</div>
+                    <div class="stat-sub">~${formatTokenCount(pbData.totalEstimatedTokens)} tokens · ${pbData.activeConversations} conv.</div>
                 </div>
-                <div style="background: var(--bg-tertiary); padding: 12px; border-radius: 8px; text-align: center;">
-                    <div style="font-size: 11px; color: var(--text-secondary); text-transform: uppercase;">Total ΔKB</div>
-                    <div style="font-size: 20px; font-weight: 700; color: var(--accent-green);">${conversionStats.totalDeltaKB.toFixed(1)}</div>
-                </div>
-                <div style="background: var(--bg-tertiary); padding: 12px; border-radius: 8px; text-align: center;">
-                    <div style="font-size: 11px; color: var(--text-secondary); text-transform: uppercase;">Total Tokens</div>
-                    <div style="font-size: 20px; font-weight: 700; color: var(--accent-purple);">${conversionStats.totalEstimatedTokens.toLocaleString()}</div>
-                </div>
-                <div style="background: var(--bg-tertiary); padding: 12px; border-radius: 8px; text-align: center;">
-                    <div style="font-size: 11px; color: var(--text-secondary); text-transform: uppercase;">Avg ΔKB/Event</div>
-                    <div style="font-size: 20px; font-weight: 700; color: var(--accent-orange);">${conversionStats.avgDeltaKBPerEvent.toFixed(1)}</div>
-                </div>
-                <div style="background: var(--bg-tertiary); padding: 12px; border-radius: 8px; text-align: center;">
-                    <div style="font-size: 11px; color: var(--text-secondary); text-transform: uppercase;">Conversations</div>
-                    <div style="font-size: 20px; font-weight: 700; color: var(--text-primary);">${conversionStats.uniqueConversations}</div>
+            </div>` : ''}
+            <div class="stat-card blue">
+                <div class="stat-label">↑ Input Today</div>
+                <div class="stat-value">${formatTokenCount(currentTotals.input)}</div>
+                <div class="stat-sub">${currentTotals.input.toLocaleString()} tokens</div>
+            </div>
+            <div class="stat-card green">
+                <div class="stat-label">↓ Output Today</div>
+                <div class="stat-value">${formatTokenCount(currentTotals.output)}</div>
+                <div class="stat-sub">${currentTotals.output.toLocaleString()} tokens</div>
+            </div>
+            <div class="stat-card purple">
+                <div class="stat-label">∑ Total Today</div>
+                <div class="stat-value">${formatTokenCount(currentTotals.total)}</div>
+                <div class="stat-sub">${currentTotals.total.toLocaleString()} tokens</div>
+            </div>
+            <div class="stat-card amber">
+                <div class="stat-label">🏆 All Time</div>
+                <div class="stat-value">${formatTokenCount(allTimeTotals.total)}</div>
+                <div class="stat-sub">${allTimeTotals.input.toLocaleString()} ↑ / ${allTimeTotals.output.toLocaleString()} ↓</div>
+            </div>
+        </div>
+
+        <!-- Chart -->
+        <div class="section">
+            <div class="section-header">
+                <span class="section-title">Token Usage</span>
+                <span class="section-badge">Last 14 days</span>
+            </div>
+            <div class="chart-wrap">
+                <canvas id="usageChart"></canvas>
+            </div>
+        </div>
+
+        <!-- Tabs -->
+        <div class="section">
+            <div class="tab-bar">
+                <button class="tab active" onclick="switchTab('entries', this)">📝 Today's Entries</button>
+                <button class="tab" onclick="switchTab('history', this)">📅 Session History</button>
+                <button class="tab" onclick="switchTab('conversions', this)">📊 Conversion Log</button>
+            </div>
+
+            <div id="tab-entries" class="tab-pane active">
+                <div class="tbl-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Time</th>
+                                <th>Provider</th>
+                                <th class="num">Input</th>
+                                <th class="num">Output</th>
+                                <th>Description</th>
+                            </tr>
+                        </thead>
+                        <tbody>${entriesHtml}</tbody>
+                    </table>
                 </div>
             </div>
-            ` : ''}
-            <table>
-                <thead>
-                    <tr>
-                        <th>Time</th>
-                        <th>Conversation</th>
-                        <th class="num">ΔKB</th>
-                        <th class="num">Est. Tokens</th>
-                        <th class="num">Tok/KB</th>
-                        <th class="num">PB Total KB</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    ${conversionEntries.length === 0
-                        ? '<tr><td colspan="6" class="empty">No conversion events logged yet. Events appear when PB file changes are detected.</td></tr>'
-                        : [...conversionEntries].reverse().map(e => `
+
+            <div id="tab-history" class="tab-pane">
+                <div class="tbl-wrap">
+                    <table>
+                        <thead>
                             <tr>
-                                <td>${new Date(e.ts).toLocaleTimeString()}</td>
-                                <td><span class="badge badge-antigravity">${e.convId.substring(0, 8)}…</span></td>
-                                <td class="num">+${e.deltaKB.toFixed(1)}</td>
-                                <td class="num">${e.estimatedTokens.toLocaleString()}</td>
-                                <td class="num">${e.tokensPerKB}</td>
-                                <td class="num">${e.pbTotalKB.toFixed(1)}</td>
+                                <th>Date</th>
+                                <th class="num">Input</th>
+                                <th class="num">Output</th>
+                                <th class="num">Total</th>
+                                <th class="num">Entries</th>
                             </tr>
-                        `).join('')
-                    }
-                </tbody>
-            </table>
+                        </thead>
+                        <tbody>${sessionRows || '<tr><td colspan="5" class="empty">No session history yet.</td></tr>'}</tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div id="tab-conversions" class="tab-pane">
+                ${conversionStats && conversionStats.totalEvents > 0 ? `
+                <div class="mini-stats">
+                    <div class="mini-stat">
+                        <div class="mini-stat-label">Events</div>
+                        <div class="mini-stat-value" style="color:var(--blue);">${conversionStats.totalEvents}</div>
+                    </div>
+                    <div class="mini-stat">
+                        <div class="mini-stat-label">ΔKB</div>
+                        <div class="mini-stat-value" style="color:var(--green);">${conversionStats.totalDeltaKB.toFixed(1)}</div>
+                    </div>
+                    <div class="mini-stat">
+                        <div class="mini-stat-label">Tokens</div>
+                        <div class="mini-stat-value" style="color:var(--purple);font-size:15px;">${conversionStats.totalEstimatedTokens.toLocaleString()}</div>
+                    </div>
+                    <div class="mini-stat">
+                        <div class="mini-stat-label">Avg KB/ev</div>
+                        <div class="mini-stat-value" style="color:var(--amber);">${conversionStats.avgDeltaKBPerEvent.toFixed(1)}</div>
+                    </div>
+                    <div class="mini-stat">
+                        <div class="mini-stat-label">Conv.</div>
+                        <div class="mini-stat-value">${conversionStats.uniqueConversations}</div>
+                    </div>
+                </div>` : ''}
+                <div class="tbl-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Time</th>
+                                <th>Conv. ID</th>
+                                <th class="num">ΔKB</th>
+                                <th class="num">Est. Tokens</th>
+                                <th class="num">Tok/KB</th>
+                                <th class="num">PB Total KB</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${conversionEntries.length === 0
+                                ? '<tr><td colspan="6" class="empty">No conversion events yet.</td></tr>'
+                                : [...conversionEntries].reverse().map(e => `
+                                <tr>
+                                    <td>${new Date(e.ts).toLocaleTimeString()}</td>
+                                    <td><span class="badge badge-antigravity">${e.convId.substring(0, 8)}…</span></td>
+                                    <td class="num">+${e.deltaKB.toFixed(1)}</td>
+                                    <td class="num">${e.estimatedTokens.toLocaleString()}</td>
+                                    <td class="num">${e.tokensPerKB}</td>
+                                    <td class="num">${e.pbTotalKB.toFixed(1)}</td>
+                                </tr>`).join('')
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
         </div>
-    </div>
 
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-    <script>
-        const vscode = acquireVsCodeApi();
+    </div><!-- /content -->
+</div><!-- /app -->
 
-        // Tab switching
-        function switchTab(tabName) {
-            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-            document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+    const vscode = acquireVsCodeApi();
 
-            event.target.classList.add('active');
-            document.getElementById('tab-' + tabName).classList.add('active');
-        }
+    function switchTab(name, el) {
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.tab-pane').forEach(t => t.classList.remove('active'));
+        el.classList.add('active');
+        document.getElementById('tab-' + name).classList.add('active');
+    }
 
-        // Actions
-        function resetSession() { vscode.postMessage({ command: 'resetSession' }); }
-        function resetAll() { vscode.postMessage({ command: 'resetAll' }); }
-        function exportData() { vscode.postMessage({ command: 'export' }); }
+    function resetSession() { vscode.postMessage({ command: 'resetSession' }); }
+    function resetAll()     { vscode.postMessage({ command: 'resetAll' }); }
+    function exportData()   { vscode.postMessage({ command: 'export' }); }
 
-        // Chart
-        const ctx = document.getElementById('usageChart');
-        if (ctx) {
-            new Chart(ctx, {
-                type: 'bar',
-                data: {
-                    labels: ${chartLabels},
-                    datasets: [
-                        {
-                            label: 'Input Tokens',
-                            data: ${chartInputData},
-                            backgroundColor: 'rgba(88, 166, 255, 0.6)',
-                            borderColor: 'rgba(88, 166, 255, 1)',
-                            borderWidth: 1,
-                            borderRadius: 4,
-                        },
-                        {
-                            label: 'Output Tokens',
-                            data: ${chartOutputData},
-                            backgroundColor: 'rgba(63, 185, 80, 0.6)',
-                            borderColor: 'rgba(63, 185, 80, 1)',
-                            borderWidth: 1,
-                            borderRadius: 4,
-                        }
-                    ]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: {
-                        legend: {
-                            labels: { color: '#8b949e', font: { size: 12 } }
-                        }
+    // Chart
+    const ctx = document.getElementById('usageChart');
+    if (ctx) {
+        new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: ${chartLabels},
+                datasets: [
+                    {
+                        label: 'Input',
+                        data: ${chartInputData},
+                        backgroundColor: 'rgba(79,142,247,0.5)',
+                        borderColor: 'rgba(79,142,247,0.9)',
+                        borderWidth: 1,
+                        borderRadius: 3,
                     },
-                    scales: {
-                        x: {
-                            stacked: true,
-                            ticks: { color: '#8b949e' },
-                            grid: { color: 'rgba(48, 54, 61, 0.5)' }
-                        },
-                        y: {
-                            stacked: true,
-                            ticks: { color: '#8b949e' },
-                            grid: { color: 'rgba(48, 54, 61, 0.5)' }
-                        }
+                    {
+                        label: 'Output',
+                        data: ${chartOutputData},
+                        backgroundColor: 'rgba(52,211,153,0.5)',
+                        borderColor: 'rgba(52,211,153,0.9)',
+                        borderWidth: 1,
+                        borderRadius: 3,
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
+                plugins: {
+                    legend: { labels: { color: '#8892a4', font: { size: 11 }, boxWidth: 10 } }
+                },
+                scales: {
+                    x: {
+                        stacked: true,
+                        ticks: { color: '#4a5568', font: { size: 10 } },
+                        grid: { color: 'rgba(255,255,255,0.04)' },
+                        border: { color: 'rgba(255,255,255,0.06)' }
+                    },
+                    y: {
+                        stacked: true,
+                        ticks: { color: '#4a5568', font: { size: 10 } },
+                        grid: { color: 'rgba(255,255,255,0.04)' },
+                        border: { color: 'rgba(255,255,255,0.06)' }
                     }
                 }
-            });
-        }
-    </script>
+            }
+        });
+    }
+</script>
 </body>
 </html>`;
     }

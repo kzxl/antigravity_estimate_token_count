@@ -4,12 +4,14 @@ import { StatusBarManager } from './statusBar';
 import { DashboardPanel } from './dashboard';
 import { PbWatcher } from './pbWatcher';
 import { ConversionTracker } from './conversionTracker';
+import { QuotaFetcher } from './quotaFetcher';
 import { countTokens } from './tokenizer';
 
 let sessionManager: SessionManager;
 let statusBarManager: StatusBarManager;
 let pbWatcher: PbWatcher | undefined;
 let conversionTracker: ConversionTracker | undefined;
+let quotaFetcher: QuotaFetcher | undefined;
 
 export function activate(context: vscode.ExtensionContext) {
     // Initialize core services
@@ -49,16 +51,30 @@ export function activate(context: vscode.ExtensionContext) {
     conversionTracker = new ConversionTracker();
     context.subscriptions.push(conversionTracker);
 
-    // Initialize status bar (with optional PB watcher)
-    statusBarManager = new StatusBarManager(sessionManager, pbWatcher);
+    // Initialize status bar (with optional PB watcher + quota fetcher)
+    // quotaFetcher initialized below — pass after init
+    statusBarManager = new StatusBarManager(sessionManager, pbWatcher, undefined);
 
     context.subscriptions.push(sessionManager);
+    context.subscriptions.push(statusBarManager);
+
+    // Initialize Quota Fetcher (real-time model quota from Antigravity API)
+    quotaFetcher = new QuotaFetcher();
+    quotaFetcher.start(120_000); // poll every 2 minutes
+    quotaFetcher.onQuotaUpdate(() => {
+        DashboardPanel.refresh(sessionManager, pbWatcher, conversionTracker, quotaFetcher);
+    });
+    context.subscriptions.push(quotaFetcher);
+
+    // Re-create status bar now that quotaFetcher is ready
+    statusBarManager.dispose();
+    statusBarManager = new StatusBarManager(sessionManager, pbWatcher, quotaFetcher);
     context.subscriptions.push(statusBarManager);
 
     // Command: Show Dashboard
     context.subscriptions.push(
         vscode.commands.registerCommand('tokenCount.showDashboard', () => {
-            DashboardPanel.createOrShow(context.extensionUri, sessionManager, pbWatcher, conversionTracker);
+            DashboardPanel.createOrShow(context.extensionUri, sessionManager, pbWatcher, conversionTracker, quotaFetcher);
         })
     );
 
