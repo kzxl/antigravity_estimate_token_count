@@ -2,7 +2,7 @@
   "name": "ai-token-counter",
   "displayName": "AI Token Counter",
   "description": "Track and count AI tokens used with Copilot, Antigravity, and other AI assistants",
-  "version": "1.2.3",
+  "version": "1.2.4",
   "publisher": "phongvo",
   "engines": {
     "vscode": "^1.85.0"
