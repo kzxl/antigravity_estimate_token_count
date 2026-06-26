@@ -66,21 +66,25 @@ export class StatusBarManager {
         const pbData = this.latestPbData ?? this.pbWatcher?.getTrackingData();
         const quota = this.latestQuota ?? this.quotaFetcher?.getData();
 
+        // ── Determine status bar background color via color customization ─
+        // (not possible via API directly, use tooltip color hints instead)
+
         // ── Status bar text ──────────────────────────────────────────────
         const parts: string[] = [];
 
-        // Quota: model đang dùng nhiều nhất (used% cao nhất có giá trị)
+        // Quota: show tất cả model theo format compact
         if (quota && quota.models.length > 0) {
-            const maxUsed = quota.models.reduce((prev, cur) => {
-                const usedPrev = 1 - (prev.remainingFraction ?? 1);
-                const usedCur  = 1 - (cur.remainingFraction  ?? 1);
-                return usedCur > usedPrev ? cur : prev;
+            const modelParts = quota.models.map(m => {
+                const usedPct = Math.round((1 - Math.max(0, Math.min(1, m.remainingFraction))) * 100);
+                return `${this.shortModelName(m.label)} ${usedPct}%`;
             });
-            const usedPct = Math.round((1 - Math.max(0, Math.min(1, maxUsed.remainingFraction))) * 100);
-            const icon = usedPct >= 85 ? '$(error)' : usedPct >= 60 ? '$(warning)' : '$(check)';
-            // Tên ngắn model
-            const shortName = this.shortModelName(maxUsed.label);
-            parts.push(`${icon} ${shortName}: ${usedPct}%`);
+
+            // Icon theo model nào dùng nhiều nhất
+            const maxUsedPct = Math.max(...quota.models.map(m =>
+                Math.round((1 - Math.max(0, Math.min(1, m.remainingFraction))) * 100)
+            ));
+            const icon = maxUsedPct >= 85 ? '$(error)' : maxUsedPct >= 60 ? '$(warning)' : '$(check)';
+            parts.push(`${icon} ${modelParts.join(' · ')}`);
         }
 
         // PB delta
@@ -96,7 +100,9 @@ export class StatusBarManager {
         if (parts.length === 0) {
             this.statusBarItem.text = `$(pulse) Token Counter`;
         } else {
-            this.statusBarItem.text = `$(pulse) ${parts.join('  ')}`;
+            // Khi có quota (đã có icon riêng), không cần $(pulse) prefix
+            const hasQuota = quota && quota.models.length > 0;
+            this.statusBarItem.text = hasQuota ? parts.join('  ') : `$(pulse) ${parts.join('  ')}`;
         }
 
         // ── Tooltip (Markdown) ──────────────────────────────────────────

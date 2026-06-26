@@ -195,255 +195,348 @@ export class DashboardPanel {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI Token Counter</title>
     <style>
+        /* ── Design System ─────────────────────────────────────────── */
         :root {
-            --bg-primary: #0d1117;
-            --bg-secondary: #161b22;
-            --bg-tertiary: #21262d;
-            --bg-card: rgba(22, 27, 34, 0.8);
+            --bg-1:   #0d1117;
+            --bg-2:   #161b22;
+            --bg-3:   #1c2128;
+            --bg-4:   #21262d;
             --border: #30363d;
-            --text-primary: #e6edf3;
-            --text-secondary: #8b949e;
-            --accent-blue: #58a6ff;
-            --accent-green: #3fb950;
-            --accent-purple: #bc8cff;
-            --accent-orange: #d29922;
-            --accent-red: #f85149;
-            --gradient-blue: linear-gradient(135deg, #1a73e8, #58a6ff);
-            --gradient-green: linear-gradient(135deg, #238636, #3fb950);
-            --gradient-purple: linear-gradient(135deg, #8957e5, #bc8cff);
-            --shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
-            --glass: rgba(255, 255, 255, 0.05);
+            --border-bright: #444c56;
+
+            --text-1: #e6edf3;
+            --text-2: #adbac7;
+            --text-3: #768390;
+
+            --blue:   #58a6ff;
+            --green:  #3fb950;
+            --purple: #bc8cff;
+            --amber:  #e3b341;
+            --red:    #f85149;
+
+            --blue-dim:   rgba(88, 166, 255, 0.15);
+            --green-dim:  rgba(63, 185, 80, 0.15);
+            --purple-dim: rgba(188, 140, 255, 0.15);
+            --amber-dim:  rgba(227, 179, 65, 0.15);
+            --red-dim:    rgba(248, 81, 73, 0.15);
+
+            --radius:    10px;
+            --radius-sm: 6px;
+            --shadow:    0 4px 24px rgba(0,0,0,0.4);
         }
 
         * { margin: 0; padding: 0; box-sizing: border-box; }
 
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
-            background: var(--bg-primary);
-            color: var(--text-primary);
-            line-height: 1.6;
-            padding: 24px;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: var(--bg-1);
+            color: var(--text-1);
+            font-size: 13px;
+            line-height: 1.5;
         }
 
-        .header {
+        /* ── Layout ── */
+        .app { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+
+        .topbar {
             display: flex;
             align-items: center;
             justify-content: space-between;
-            margin-bottom: 24px;
-            padding-bottom: 16px;
+            padding: 10px 20px;
+            background: var(--bg-2);
             border-bottom: 1px solid var(--border);
+            flex-shrink: 0;
         }
 
-        .header h1 {
-            font-size: 24px;
-            font-weight: 600;
-            background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
+        .logo {
             display: flex;
+            align-items: center;
+            gap: 8px;
+            font-weight: 600;
+            font-size: 14px;
+            color: var(--text-1);
+        }
+
+        .logo-icon { font-size: 18px; }
+
+        .topbar-right { display: flex; gap: 6px; align-items: center; }
+
+        .content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 16px 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+        }
+
+        /* ── Scrollbar ── */
+        ::-webkit-scrollbar { width: 5px; height: 5px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: var(--border-bright); border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
+
+        /* ── Buttons ── */
+        .btn {
+            padding: 5px 12px;
+            border-radius: var(--radius-sm);
+            border: 1px solid var(--border-bright);
+            background: var(--bg-4);
+            color: var(--text-2);
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 500;
+            transition: all 0.15s;
+            white-space: nowrap;
+        }
+        .btn:hover { background: var(--bg-3); color: var(--text-1); border-color: var(--text-3); }
+        .btn-primary { background: var(--blue); border-color: var(--blue); color: #fff; }
+        .btn-primary:hover { opacity: 0.85; }
+        .btn-danger { border-color: var(--red); color: var(--red); }
+        .btn-danger:hover { background: var(--red-dim); }
+
+        /* ── Quota Card ── */
+        .quota-card {
+            background: var(--bg-2);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 14px 16px;
+            animation: fadeUp 0.25s ease both;
+        }
+
+        .quota-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 12px;
+        }
+
+        .quota-title {
+            font-weight: 600;
+            font-size: 13px;
+            color: var(--text-1);
+        }
+
+        .quota-badge {
+            font-size: 10px;
+            color: var(--text-3);
+            background: var(--bg-4);
+            padding: 2px 8px;
+            border-radius: 20px;
+            border: 1px solid var(--border);
+        }
+
+        .quota-grid { display: flex; flex-direction: column; gap: 8px; }
+
+        .quota-row {
+            display: grid;
+            grid-template-columns: 180px 1fr 64px;
             align-items: center;
             gap: 10px;
         }
 
-        .header-actions {
-            display: flex;
-            gap: 8px;
-        }
-
-        .btn {
-            padding: 6px 14px;
-            border-radius: 6px;
-            border: 1px solid var(--border);
-            background: var(--bg-tertiary);
-            color: var(--text-primary);
-            cursor: pointer;
-            font-size: 13px;
-            transition: all 0.2s;
-        }
-
-        .btn:hover { background: var(--border); }
-
-        .btn-danger {
-            border-color: var(--accent-red);
-            color: var(--accent-red);
-        }
-
-        .btn-danger:hover {
-            background: rgba(248, 81, 73, 0.15);
-        }
-
-        .btn-primary {
-            background: var(--gradient-blue);
-            border: none;
-            color: white;
-        }
-
-        .btn-primary:hover { opacity: 0.9; }
-
-        /* Summary Cards */
-        .summary-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 16px;
-            margin-bottom: 24px;
-        }
-
-        .card {
-            background: var(--bg-card);
-            backdrop-filter: blur(10px);
-            border: 1px solid var(--border);
-            border-radius: 12px;
-            padding: 20px;
-            box-shadow: var(--shadow);
-            position: relative;
-            overflow: hidden;
-        }
-
-        .card::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            height: 3px;
-            border-radius: 12px 12px 0 0;
-        }
-
-        .card.input::before { background: var(--gradient-blue); }
-        .card.output::before { background: var(--gradient-green); }
-        .card.total::before { background: var(--gradient-purple); }
-        .card.alltime::before { background: linear-gradient(135deg, var(--accent-orange), #f0883e); }
-        .card.quota::before { background: linear-gradient(135deg, #00b4d8, #90e0ef); }
-
-        .card-label {
+        .quota-model {
             font-size: 12px;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            color: var(--text-secondary);
-            margin-bottom: 8px;
+            color: var(--text-2);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
         }
 
-        .card-value {
-            font-size: 32px;
+        .quota-bar-wrap {
+            height: 6px;
+            background: var(--bg-4);
+            border-radius: 3px;
+            overflow: hidden;
+            border: 1px solid var(--border);
+        }
+
+        .quota-bar-fill {
+            height: 100%;
+            border-radius: 3px;
+            transition: width 0.4s ease;
+        }
+
+        .quota-pct {
+            font-size: 11px;
             font-weight: 700;
+            text-align: right;
             font-variant-numeric: tabular-nums;
         }
 
-        .card.input .card-value { color: var(--accent-blue); }
-        .card.output .card-value { color: var(--accent-green); }
-        .card.total .card-value { color: var(--accent-purple); }
-        .card.alltime .card-value { color: var(--accent-orange); }
+        .quota-pct span { font-weight: 400; }
 
-        .card-sub {
+        .quota-empty {
+            color: var(--text-3);
             font-size: 12px;
-            color: var(--text-secondary);
-            margin-top: 4px;
+            text-align: center;
+            padding: 8px 0;
         }
 
-        /* Chart Section */
-        .section {
-            background: var(--bg-card);
+        /* ── Stats Row ── */
+        .stats-row {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+            gap: 10px;
+            animation: fadeUp 0.3s 0.05s ease both;
+        }
+
+        .stat-card {
+            background: var(--bg-2);
             border: 1px solid var(--border);
-            border-radius: 12px;
-            padding: 20px;
-            margin-bottom: 24px;
-            box-shadow: var(--shadow);
-        }
-
-        .section h2 {
-            font-size: 16px;
-            font-weight: 600;
-            margin-bottom: 16px;
-            color: var(--text-primary);
-        }
-
-        .chart-container {
+            border-radius: var(--radius);
+            padding: 14px 16px;
             position: relative;
-            width: 100%;
-            height: 250px;
+            overflow: hidden;
         }
 
-        /* Table */
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 13px;
+        .stat-card::after {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 2px;
         }
+
+        .stat-card.blue::after   { background: linear-gradient(90deg, #1a73e8, var(--blue)); }
+        .stat-card.green::after  { background: linear-gradient(90deg, #1a8f43, var(--green)); }
+        .stat-card.purple::after { background: linear-gradient(90deg, #7a4bb5, var(--purple)); }
+        .stat-card.amber::after  { background: linear-gradient(90deg, #b07c17, var(--amber)); }
+        .stat-card.pb-card::after { background: linear-gradient(90deg, #7a4bb5, var(--purple)); }
+
+        .stat-label {
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+            color: var(--text-3);
+            margin-bottom: 6px;
+        }
+
+        .stat-value {
+            font-size: 24px;
+            font-weight: 700;
+            font-variant-numeric: tabular-nums;
+            line-height: 1.1;
+        }
+
+        .stat-card.blue   .stat-value { color: var(--blue); }
+        .stat-card.green  .stat-value { color: var(--green); }
+        .stat-card.purple .stat-value { color: var(--purple); }
+        .stat-card.amber  .stat-value { color: var(--amber); }
+
+        .stat-sub {
+            font-size: 10px;
+            color: var(--text-3);
+            margin-top: 4px;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .pb-icon { font-size: 22px; margin-bottom: 6px; }
+
+        /* ── Section ── */
+        .section {
+            background: var(--bg-2);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 14px 16px;
+            animation: fadeUp 0.3s 0.1s ease both;
+        }
+
+        .section-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 12px;
+        }
+
+        .section-title {
+            font-weight: 600;
+            font-size: 13px;
+            color: var(--text-1);
+        }
+
+        .section-badge {
+            font-size: 10px;
+            color: var(--text-3);
+            background: var(--bg-4);
+            padding: 2px 8px;
+            border-radius: 20px;
+            border: 1px solid var(--border);
+        }
+
+        /* ── Chart ── */
+        .chart-wrap { position: relative; height: 200px; }
+
+        /* ── Tabs ── */
+        .tab-bar {
+            display: flex;
+            border-bottom: 1px solid var(--border);
+            margin-bottom: 12px;
+        }
+
+        .tab {
+            padding: 7px 14px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--text-3);
+            border: none;
+            background: none;
+            border-bottom: 2px solid transparent;
+            transition: all 0.15s;
+            margin-bottom: -1px;
+        }
+
+        .tab:hover { color: var(--text-2); }
+        .tab.active { color: var(--blue); border-bottom-color: var(--blue); }
+
+        .tab-pane { display: none; }
+        .tab-pane.active { display: block; }
+
+        /* ── Table ── */
+        .tbl-wrap { overflow-x: auto; }
+
+        table { width: 100%; border-collapse: collapse; }
 
         th {
             text-align: left;
-            padding: 10px 12px;
-            border-bottom: 2px solid var(--border);
-            color: var(--text-secondary);
+            padding: 8px 10px;
+            border-bottom: 1px solid var(--border);
+            color: var(--text-3);
             font-weight: 600;
-            font-size: 11px;
+            font-size: 10px;
             text-transform: uppercase;
             letter-spacing: 0.5px;
+            white-space: nowrap;
         }
 
         td {
-            padding: 8px 12px;
+            padding: 7px 10px;
             border-bottom: 1px solid var(--border);
+            color: var(--text-2);
         }
 
-        tr:hover td {
-            background: var(--glass);
-        }
+        tr:last-child td { border-bottom: none; }
+        tr:hover td { background: rgba(255,255,255,0.025); }
 
-        .num { text-align: right; font-variant-numeric: tabular-nums; }
+        .num { text-align: right; font-variant-numeric: tabular-nums; color: var(--text-1); }
 
         .desc {
-            max-width: 300px;
+            max-width: 280px;
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
-            color: var(--text-secondary);
+            color: var(--text-3);
         }
 
         .empty {
             text-align: center;
-            color: var(--text-secondary);
-            padding: 24px !important;
+            color: var(--text-3);
+            padding: 20px !important;
             font-style: italic;
         }
 
+        /* ── Badge ── */
         .badge {
-            display: inline-block;
-            padding: 2px 8px;
-            border-radius: 12px;
-            font-size: 11px;
-            font-weight: 500;
-        }
-
-        .badge-manual { background: rgba(188, 140, 255, 0.2); color: var(--accent-purple); }
-        .badge-selection { background: rgba(88, 166, 255, 0.2); color: var(--accent-blue); }
-        .badge-copilot { background: rgba(63, 185, 80, 0.2); color: var(--accent-green); }
-        .badge-antigravity { background: rgba(210, 153, 34, 0.2); color: var(--accent-orange); }
-
-        /* Tabs */
-        .tabs {
-            display: flex;
-            gap: 0;
-            margin-bottom: 16px;
-            border-bottom: 1px solid var(--border);
-        }
-
-        .tab {
-            padding: 8px 16px;
-            cursor: pointer;
-            font-size: 13px;
-            color: var(--text-secondary);
-            border-bottom: 2px solid transparent;
-            transition: all 0.2s;
-        }
-
-        .tab:hover { color: var(--text-primary); }
-
-        .tab.active {
-            color: var(--accent-blue);
-            border-bottom-color: var(--accent-blue);
-        }
-
             display: inline-flex;
             align-items: center;
             padding: 2px 7px;
@@ -452,24 +545,27 @@ export class DashboardPanel {
             font-weight: 600;
             letter-spacing: 0.2px;
         }
-        .badge-manual    { background: var(--purple-dim); color: var(--purple); }
-        .badge-selection { background: var(--blue-dim);   color: var(--blue); }
-        .badge-copilot   { background: var(--green-dim);  color: var(--green); }
-        .badge-antigravity { background: var(--amber-dim); color: var(--amber); }
+        .badge-manual      { background: var(--purple-dim); color: var(--purple); }
+        .badge-selection   { background: var(--blue-dim);   color: var(--blue); }
+        .badge-copilot     { background: var(--green-dim);  color: var(--green); }
+        .badge-antigravity { background: var(--amber-dim);  color: var(--amber); }
 
-        /* ── Conversion mini stats ── */
+        /* ── Mini Stats (Conversion tab) ── */
         .mini-stats {
             display: grid;
             grid-template-columns: repeat(5, 1fr);
             gap: 8px;
-            margin-bottom: 14px;
+            margin-bottom: 12px;
         }
+
         .mini-stat {
             background: var(--bg-4);
+            border: 1px solid var(--border);
             border-radius: var(--radius-sm);
             padding: 10px 12px;
             text-align: center;
         }
+
         .mini-stat-label {
             font-size: 9px;
             text-transform: uppercase;
@@ -477,26 +573,19 @@ export class DashboardPanel {
             color: var(--text-3);
             margin-bottom: 4px;
         }
+
         .mini-stat-value {
             font-size: 18px;
             font-weight: 700;
             font-variant-numeric: tabular-nums;
+            color: var(--text-1);
         }
-
-        /* ── Scrollbar ── */
-        ::-webkit-scrollbar { width: 6px; height: 6px; }
-        ::-webkit-scrollbar-track { background: transparent; }
-        ::-webkit-scrollbar-thumb { background: var(--border-bright); border-radius: 3px; }
-        ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
 
         /* ── Animations ── */
         @keyframes fadeUp {
-            from { opacity: 0; transform: translateY(8px); }
+            from { opacity: 0; transform: translateY(6px); }
             to   { opacity: 1; transform: translateY(0); }
         }
-        .quota-card { animation: fadeUp 0.25s ease both; }
-        .stats-row  { animation: fadeUp 0.3s 0.05s ease both; }
-        .section    { animation: fadeUp 0.3s 0.1s ease both; }
     </style>
 </head>
 <body>
@@ -540,9 +629,10 @@ export class DashboardPanel {
                     const resetDate = new Date(m.resetTime);
                     const resetStr = resetDate.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
                     const pctStr = usedPct < 0.1 ? '0' : usedPct.toFixed(usedPct < 1 ? 1 : 0);
+                    const remainPct = Math.round(m.remainingFraction * 100);
                     return `
-                    <div class="quota-row">
-                        <div class="quota-model" title="${m.label}">${m.label}</div>
+                    <div class="quota-row" title="${m.label} — ${pctStr}% used, ${remainPct}% remaining, reset at ${resetStr}">
+                        <div class="quota-model">${m.label}</div>
                         <div class="quota-bar-wrap">
                             <div class="quota-bar-fill" style="width:${usedPct}%;background:${barColor};"></div>
                         </div>
@@ -766,16 +856,16 @@ export class DashboardPanel {
                     {
                         label: 'Input',
                         data: ${chartInputData},
-                        backgroundColor: 'rgba(79,142,247,0.5)',
-                        borderColor: 'rgba(79,142,247,0.9)',
+                        backgroundColor: 'rgba(79,142,247,0.45)',
+                        borderColor: 'rgba(79,142,247,0.85)',
                         borderWidth: 1,
                         borderRadius: 3,
                     },
                     {
                         label: 'Output',
                         data: ${chartOutputData},
-                        backgroundColor: 'rgba(52,211,153,0.5)',
-                        borderColor: 'rgba(52,211,153,0.9)',
+                        backgroundColor: 'rgba(52,211,153,0.45)',
+                        borderColor: 'rgba(52,211,153,0.85)',
                         borderWidth: 1,
                         borderRadius: 3,
                     }
@@ -786,19 +876,19 @@ export class DashboardPanel {
                 maintainAspectRatio: false,
                 interaction: { mode: 'index', intersect: false },
                 plugins: {
-                    legend: { labels: { color: '#8892a4', font: { size: 11 }, boxWidth: 10 } }
+                    legend: { labels: { color: '#768390', font: { size: 11 }, boxWidth: 10 } }
                 },
                 scales: {
                     x: {
                         stacked: true,
                         ticks: { color: '#4a5568', font: { size: 10 } },
-                        grid: { color: 'rgba(255,255,255,0.04)' },
+                        grid: { color: 'rgba(255,255,255,0.03)' },
                         border: { color: 'rgba(255,255,255,0.06)' }
                     },
                     y: {
                         stacked: true,
                         ticks: { color: '#4a5568', font: { size: 10 } },
-                        grid: { color: 'rgba(255,255,255,0.04)' },
+                        grid: { color: 'rgba(255,255,255,0.03)' },
                         border: { color: 'rgba(255,255,255,0.06)' }
                     }
                 }
