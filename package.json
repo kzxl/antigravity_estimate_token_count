@@ -127,6 +127,12 @@
           "type": "string",
           "default": "",
           "description": "Custom path for the conversion log JSONL file. Leave empty to use default (~/.gemini/antigravity/token-conversion-log.jsonl)"
+        },
+        "tokenCount.dailyTokenLimit": {
+          "type": "number",
+          "default": 1000000,
+          "minimum": 1000,
+          "description": "Daily token limit used for displaying the estimated token usage progress bar on the dashboard."
         }
       }
     }

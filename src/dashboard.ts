@@ -236,23 +236,23 @@ export class DashboardPanel {
 
         } else if (todayLog && todayLog.events > 0) {
             const tokens = todayLog.tokens;
-            const LIMITS = [
-                { name: 'Gemini 3.5 Flash', limit: 1_048_576, color: 'linear-gradient(90deg, #10b981, #059669)' },
-                { name: 'Claude 3.5 Sonnet', limit: 200_000,   color: 'linear-gradient(90deg, #f59e0b, #d97706)' },
-                { name: 'GPT-4o',           limit: 128_000,   color: 'linear-gradient(90deg, #06b6d4, #0891b2)' },
-            ];
-            const modelBars = LIMITS.map(m => {
-                const pct = Math.min(100, (tokens / m.limit) * 100);
-                const limitStr = m.limit >= 1_000_000 ? `${(m.limit/1_000_000).toFixed(1)}M` : `${(m.limit/1_000).toFixed(0)}K`;
-                return `
-                <div class="quota-row">
-                    <div class="quota-model">${m.name}</div>
-                    <div class="quota-bar-wrap">
-                        <div class="quota-bar-fill" style="width:${pct}%;background:${m.color};"></div>
-                    </div>
-                    <div class="quota-pct" style="color:#adbac7;">${pct.toFixed(pct<1?2:1)}%<span style="color:var(--text-3);font-size:9px;font-weight:400;">/${limitStr}</span></div>
-                </div>`;
-            }).join('');
+            const config = vscode.workspace.getConfiguration('tokenCount');
+            const dailyLimit = config.get<number>('dailyTokenLimit', 1000000);
+            
+            const pct = Math.min(100, (tokens / dailyLimit) * 100);
+            const limitStr = formatTokenCount(dailyLimit);
+            const barColor = pct >= 90 ? 'linear-gradient(90deg, #ef4444, #b91c1c)' : pct >= 70 ? 'linear-gradient(90deg, #f59e0b, #d97706)' : 'linear-gradient(90deg, #10b981, #059669)';
+            const textColor = pct >= 90 ? '#ef4444' : pct >= 70 ? '#fbbf24' : '#adbac7';
+
+            const modelBars = `
+            <div class="quota-row">
+                <div class="quota-model">Today's Usage</div>
+                <div class="quota-bar-wrap">
+                    <div class="quota-bar-fill" style="width:${pct}%;background:${barColor};"></div>
+                </div>
+                <div class="quota-pct" style="color:${textColor};">${pct.toFixed(pct < 1 ? 2 : 1)}%<span style="color:var(--text-3);font-size:9px;font-weight:400;">/${limitStr}</span></div>
+            </div>`;
+
             return `
             <div class="quota-card">
                 <div class="quota-header">
