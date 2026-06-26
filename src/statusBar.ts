@@ -123,8 +123,8 @@ export class StatusBarManager {
             for (const m of quota.models) {
                 const usedPct = Math.round((1 - Math.max(0, Math.min(1, m.remainingFraction))) * 100);
                 const remainPct = Math.round(m.remainingFraction * 100);
+                const resetTime = new Date(m.resetTime).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
                 const icon = usedPct >= 85 ? '🔴' : usedPct >= 60 ? '🟡' : '🟢';
-                const resetTime = new Date(m.resetTime).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
                 md.appendMarkdown(`| ${icon} ${this.shortModelName(m.label)} | **${usedPct}%** | ${remainPct}% _(reset ${resetTime})_ |\n`);
             }
             md.appendMarkdown(`\n`);

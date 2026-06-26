@@ -12,6 +12,7 @@ export class DashboardPanel {
     private readonly panel: vscode.WebviewPanel;
     private readonly extensionUri: vscode.Uri;
     private disposables: vscode.Disposable[] = [];
+    private isHtmlInitialized = false;
 
     public static createOrShow(
         extensionUri: vscode.Uri,
@@ -142,43 +143,194 @@ export class DashboardPanel {
             todayLog = await conversionTracker.getTodayTokensFromLog();
         }
 
-        this.panel.webview.html = this.getHtmlContent(sessions, currentTotals, allTimeTotals, pbData, conversionEntries, conversionStats, todayLog, quotaData);
-    }
-
-    private getHtmlContent(
-        sessions: TokenSession[],
-        currentTotals: { input: number; output: number; total: number },
-        allTimeTotals: { input: number; output: number; total: number },
-        pbData?: { totalDeltaKB: number; totalEstimatedTokens: number; activeConversations: number; lastUpdate: number },
-        conversionEntries: ConversionLogEntry[] = [],
-        conversionStats?: ConversionStats,
-        todayLog?: { tokens: number; events: number; deltaKB: number },
-        quotaData?: QuotaData,
-    ): string {
         // Prepare chart data (last 14 days)
         const last14Days = this.getLast14DaysData(sessions);
-        const chartLabels = JSON.stringify(last14Days.map(d => d.label));
-        const chartInputData = JSON.stringify(last14Days.map(d => d.input));
-        const chartOutputData = JSON.stringify(last14Days.map(d => d.output));
+        const chartLabels = last14Days.map(d => d.label);
+        const chartInputData = last14Days.map(d => d.input);
+        const chartOutputData = last14Days.map(d => d.output);
 
         // Current session entries (latest first)
         const currentSession = sessions.find(s => s.date === new Date().toISOString().slice(0, 10));
         const entries = currentSession ? [...currentSession.entries].reverse() : [];
 
-        const entriesHtml = entries.length === 0
-            ? '<tr><td colspan="5" class="empty">No entries yet. Use "Count Selection" or "Add Manual Entry" to start tracking.</td></tr>'
-            : entries.map(e => `
-                <tr>
-                    <td>${new Date(e.timestamp).toLocaleTimeString()}</td>
-                    <td><span class="badge badge-${e.provider}">${e.provider}</span></td>
-                    <td class="num">${e.inputTokens.toLocaleString()}</td>
-                    <td class="num">${e.outputTokens.toLocaleString()}</td>
-                    <td class="desc">${this.escapeHtml(e.description)}</td>
-                </tr>
-            `).join('');
+        // Render fragments
+        const quotaCardHtml = this.renderQuotaCard(quotaData, todayLog);
+        const statsRowHtml = this.renderStatsRow(pbData, currentTotals, allTimeTotals);
+        const entriesTbodyHtml = this.renderEntries(entries);
+        const historyTbodyHtml = this.renderHistory(sessions);
+        const conversionsHtml = this.renderConversions(conversionEntries, conversionStats);
 
-        // Session history
-        const sessionRows = [...sessions].reverse().map(s => `
+        if (!this.isHtmlInitialized) {
+            this.panel.webview.html = this.getHtmlContent(
+                quotaCardHtml,
+                statsRowHtml,
+                entriesTbodyHtml,
+                historyTbodyHtml,
+                conversionsHtml,
+                chartLabels,
+                chartInputData,
+                chartOutputData
+            );
+            this.isHtmlInitialized = true;
+        } else {
+            this.panel.webview.postMessage({
+                command: 'update',
+                quotaCardHtml,
+                statsRowHtml,
+                entriesTbodyHtml,
+                historyTbodyHtml,
+                conversionsHtml,
+                chartLabels,
+                chartInputData,
+                chartOutputData
+            });
+        }
+    }
+
+    private getModelColor(label: string): string {
+        const l = label.toLowerCase();
+        if (l.includes('flash') || l.includes('gemini 3.5')) { return '#34d399'; }
+        if (l.includes('gemini')) { return '#4f8ef7'; }
+        if (l.includes('claude sonnet') || l.includes('claude 3.5')) { return '#f59e0b'; }
+        if (l.includes('claude opus')) { return '#a78bfa'; }
+        if (l.includes('claude')) { return '#f59e0b'; }
+        if (l.includes('gpt') || l.includes('openai')) { return '#22d3ee'; }
+        return '#8892a4';
+    }
+
+    private renderQuotaCard(quotaData?: QuotaData, todayLog?: { tokens: number; events: number; deltaKB: number }): string {
+        if (quotaData && quotaData.models.length > 0) {
+            const fetchedAgo = Math.round((Date.now() - quotaData.fetchedAt) / 1000);
+            const agoStr = fetchedAgo < 60 ? `${fetchedAgo}s ago` : `${Math.round(fetchedAgo/60)}m ago`;
+            const modelBars = quotaData.models.map(m => {
+                const usedPct = (1 - Math.max(0, Math.min(1, m.remainingFraction))) * 100;
+                const color = this.getModelColor(m.label);
+                const barColor = usedPct >= 85 ? '#f87171' : usedPct >= 60 ? '#fbbf24' : color;
+                const resetDate = new Date(m.resetTime);
+                const resetStr = resetDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+                const pctStr = usedPct < 0.1 ? '0' : usedPct.toFixed(usedPct < 1 ? 1 : 0);
+                const remainPct = Math.round(m.remainingFraction * 100);
+                return `
+                <div class="quota-row" title="${m.label} — ${pctStr}% used, ${remainPct}% remaining, reset at ${resetStr}">
+                    <div class="quota-model">${m.label}</div>
+                    <div class="quota-bar-wrap">
+                        <div class="quota-bar-fill" style="width:${usedPct}%;background:${barColor};"></div>
+                    </div>
+                    <div class="quota-pct" style="color:${barColor};">${pctStr}%<span style="color:var(--text-3);font-size:9px;font-weight:400;"> used</span></div>
+                </div>`;
+            }).join('');
+            return `
+            <div class="quota-card">
+                <div class="quota-header">
+                    <span class="quota-title">⚡ Live Quota — Antigravity</span>
+                    <span class="quota-badge">Live · ${agoStr}</span>
+                </div>
+                <div class="quota-grid">${modelBars}</div>
+            </div>`;
+
+        } else if (todayLog && todayLog.events > 0) {
+            const tokens = todayLog.tokens;
+            const LIMITS = [
+                { name: 'Gemini 3.5 Flash', limit: 1_048_576, color: '#34d399' },
+                { name: 'Claude 3.5 Sonnet', limit: 200_000,   color: '#f59e0b' },
+                { name: 'GPT-4o',           limit: 128_000,   color: '#22d3ee' },
+            ];
+            const modelBars = LIMITS.map(m => {
+                const pct = Math.min(100, (tokens / m.limit) * 100);
+                const limitStr = m.limit >= 1_000_000 ? `${(m.limit/1_000_000).toFixed(1)}M` : `${(m.limit/1_000).toFixed(0)}K`;
+                return `
+                <div class="quota-row">
+                    <div class="quota-model">${m.name}</div>
+                    <div class="quota-bar-wrap">
+                        <div class="quota-bar-fill" style="width:${pct}%;background:${m.color};"></div>
+                    </div>
+                    <div class="quota-pct" style="color:${m.color};">${pct.toFixed(pct<1?2:1)}%<span style="color:var(--text-3);font-size:9px;font-weight:400;">/${limitStr}</span></div>
+                </div>`;
+            }).join('');
+            return `
+            <div class="quota-card">
+                <div class="quota-header">
+                    <span class="quota-title">📡 Today's Estimated Tokens</span>
+                    <span class="quota-badge">${formatTokenCount(tokens)} · ${todayLog.events} events</span>
+                </div>
+                <div class="quota-grid">${modelBars}</div>
+            </div>`;
+        } else {
+            return `
+            <div class="quota-card" style="opacity:0.5;">
+                <div class="quota-header">
+                    <span class="quota-title">📡 Quota</span>
+                </div>
+                <div class="quota-empty">Loading quota data from Antigravity API...</div>
+            </div>`;
+        }
+    }
+
+    private renderStatsRow(
+        pbData?: { totalDeltaKB: number; totalEstimatedTokens: number; activeConversations: number; lastUpdate: number },
+        currentTotals?: { input: number; output: number; total: number },
+        allTimeTotals?: { input: number; output: number; total: number }
+    ): string {
+        const pbHtml = pbData ? `
+        <div class="stat-card pb-card">
+            <div class="pb-icon">🔤</div>
+            <div>
+                <div class="stat-label">Auto-Track (This Session)</div>
+                <div class="stat-value" style="color:var(--purple);font-size:22px;">+${pbData.totalDeltaKB.toFixed(1)} KB</div>
+                <div class="stat-sub">~${formatTokenCount(pbData.totalEstimatedTokens)} tokens · ${pbData.activeConversations} conv.</div>
+            </div>
+        </div>` : '';
+
+        const inputVal = currentTotals ? formatTokenCount(currentTotals.input) : '0';
+        const inputSub = currentTotals ? currentTotals.input.toLocaleString() : '0';
+        const outputVal = currentTotals ? formatTokenCount(currentTotals.output) : '0';
+        const outputSub = currentTotals ? currentTotals.output.toLocaleString() : '0';
+        const totalVal = currentTotals ? formatTokenCount(currentTotals.total) : '0';
+        const totalSub = currentTotals ? currentTotals.total.toLocaleString() : '0';
+        const allTimeVal = allTimeTotals ? formatTokenCount(allTimeTotals.total) : '0';
+        const allTimeSub = allTimeTotals ? `${allTimeTotals.input.toLocaleString()} ↑ / ${allTimeTotals.output.toLocaleString()} ↓` : '0 ↑ / 0 ↓';
+
+        return `
+        ${pbHtml}
+        <div class="stat-card blue">
+            <div class="stat-label">↑ Input Today</div>
+            <div class="stat-value">${inputVal}</div>
+            <div class="stat-sub">${inputSub} tokens</div>
+        </div>
+        <div class="stat-card green">
+            <div class="stat-label">↓ Output Today</div>
+            <div class="stat-value">${outputVal}</div>
+            <div class="stat-sub">${outputSub} tokens</div>
+        </div>
+        <div class="stat-card purple">
+            <div class="stat-label">∑ Total Today</div>
+            <div class="stat-value">${totalVal}</div>
+            <div class="stat-sub">${totalSub} tokens</div>
+        </div>
+        <div class="stat-card amber">
+            <div class="stat-label">🏆 All Time</div>
+            <div class="stat-value">${allTimeVal}</div>
+            <div class="stat-sub">${allTimeSub}</div>
+        </div>`;
+    }
+
+    private renderEntries(entries: any[]): string {
+        if (entries.length === 0) {
+            return '<tr><td colspan="5" class="empty">No entries yet. Use "Count Selection" or "Add Manual Entry" to start tracking.</td></tr>';
+        }
+        return entries.map(e => `
+            <tr>
+                <td>${new Date(e.timestamp).toLocaleTimeString()}</td>
+                <td><span class="badge badge-${e.provider}">${e.provider}</span></td>
+                <td class="num">${e.inputTokens.toLocaleString()}</td>
+                <td class="num">${e.outputTokens.toLocaleString()}</td>
+                <td class="desc">${this.escapeHtml(e.description)}</td>
+            </tr>
+        `).join('');
+    }
+
+    private renderHistory(sessions: TokenSession[]): string {
+        const rows = [...sessions].reverse().map(s => `
             <tr>
                 <td>${s.date}</td>
                 <td class="num">${s.totalInput.toLocaleString()}</td>
@@ -187,6 +339,80 @@ export class DashboardPanel {
                 <td class="num">${s.entries.length}</td>
             </tr>
         `).join('');
+        return rows || '<tr><td colspan="5" class="empty">No session history yet.</td></tr>';
+    }
+
+    private renderConversions(conversionEntries: ConversionLogEntry[] = [], conversionStats?: ConversionStats): string {
+        const statsHtml = conversionStats && conversionStats.totalEvents > 0 ? `
+        <div class="mini-stats">
+            <div class="mini-stat">
+                <div class="mini-stat-label">Events</div>
+                <div class="mini-stat-value" style="color:var(--blue);">${conversionStats.totalEvents}</div>
+            </div>
+            <div class="mini-stat">
+                <div class="mini-stat-label">ΔKB</div>
+                <div class="mini-stat-value" style="color:var(--green);">${conversionStats.totalDeltaKB.toFixed(1)}</div>
+            </div>
+            <div class="mini-stat">
+                <div class="mini-stat-label">Tokens</div>
+                <div class="mini-stat-value" style="color:var(--purple);font-size:15px;">${conversionStats.totalEstimatedTokens.toLocaleString()}</div>
+            </div>
+            <div class="mini-stat">
+                <div class="mini-stat-label">Avg KB/ev</div>
+                <div class="mini-stat-value" style="color:var(--amber);">${conversionStats.avgDeltaKBPerEvent.toFixed(1)}</div>
+            </div>
+            <div class="mini-stat">
+                <div class="mini-stat-label">Conv.</div>
+                <div class="mini-stat-value">${conversionStats.uniqueConversations}</div>
+            </div>
+        </div>` : '';
+
+        const tableBody = conversionEntries.length === 0
+            ? '<tr><td colspan="6" class="empty">No conversion events yet.</td></tr>'
+            : [...conversionEntries].reverse().map(e => `
+            <tr>
+                <td>${new Date(e.ts).toLocaleTimeString()}</td>
+                <td><span class="badge badge-antigravity">${e.convId.substring(0, 8)}…</span></td>
+                <td class="num">+${e.deltaKB.toFixed(1)}</td>
+                <td class="num">${e.estimatedTokens.toLocaleString()}</td>
+                <td class="num">${e.tokensPerKB}</td>
+                <td class="num">${e.pbTotalKB.toFixed(1)}</td>
+            </tr>`).join('');
+
+        return `
+        ${statsHtml}
+        <div class="tbl-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Time</th>
+                        <th>Conv. ID</th>
+                        <th class="num">ΔKB</th>
+                        <th class="num">Est. Tokens</th>
+                        <th class="num">Tok/KB</th>
+                        <th class="num">PB Total KB</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${tableBody}
+                </tbody>
+            </table>
+        </div>`;
+    }
+
+        private getHtmlContent(
+        quotaCardHtml: string,
+        statsRowHtml: string,
+        entriesTbodyHtml: string,
+        historyTbodyHtml: string,
+        conversionsHtml: string,
+        chartLabels: string[],
+        chartInputData: number[],
+        chartOutputData: number[]
+    ): string {
+        const chartLabelsStr = JSON.stringify(chartLabels);
+        const chartInputDataStr = JSON.stringify(chartInputData);
+        const chartOutputDataStr = JSON.stringify(chartOutputData);
 
         return /*html*/`<!DOCTYPE html>
 <html lang="en">
@@ -606,117 +832,14 @@ export class DashboardPanel {
 
     <div class="content">
 
-        <!-- Quota Card -->
-        ${(() => {
-            const getModelColor = (label: string): string => {
-                const l = label.toLowerCase();
-                if (l.includes('flash') || l.includes('gemini 3.5')) { return '#34d399'; }
-                if (l.includes('gemini')) { return '#4f8ef7'; }
-                if (l.includes('claude sonnet')) { return '#f59e0b'; }
-                if (l.includes('claude opus')) { return '#a78bfa'; }
-                if (l.includes('claude')) { return '#f59e0b'; }
-                if (l.includes('gpt') || l.includes('openai')) { return '#22d3ee'; }
-                return '#8892a4';
-            };
+        <!-- Quota Card Container -->
+        <div id="quota-card-container">
+            ${quotaCardHtml}
+        </div>
 
-            if (quotaData && quotaData.models.length > 0) {
-                const fetchedAgo = Math.round((Date.now() - quotaData.fetchedAt) / 1000);
-                const agoStr = fetchedAgo < 60 ? `${fetchedAgo}s ago` : `${Math.round(fetchedAgo/60)}m ago`;
-                const modelBars = quotaData.models.map(m => {
-                    const usedPct = (1 - Math.max(0, Math.min(1, m.remainingFraction))) * 100;
-                    const color = getModelColor(m.label);
-                    const barColor = usedPct >= 85 ? '#f87171' : usedPct >= 60 ? '#fbbf24' : color;
-                    const resetDate = new Date(m.resetTime);
-                    const resetStr = resetDate.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
-                    const pctStr = usedPct < 0.1 ? '0' : usedPct.toFixed(usedPct < 1 ? 1 : 0);
-                    const remainPct = Math.round(m.remainingFraction * 100);
-                    return `
-                    <div class="quota-row" title="${m.label} — ${pctStr}% used, ${remainPct}% remaining, reset at ${resetStr}">
-                        <div class="quota-model">${m.label}</div>
-                        <div class="quota-bar-wrap">
-                            <div class="quota-bar-fill" style="width:${usedPct}%;background:${barColor};"></div>
-                        </div>
-                        <div class="quota-pct" style="color:${barColor};">${pctStr}%<span style="color:var(--text-3);font-size:9px;font-weight:400;"> used</span></div>
-                    </div>`;
-                }).join('');
-                return `
-        <div class="quota-card">
-            <div class="quota-header">
-                <span class="quota-title">⚡ Quota Thực Tế — Antigravity</span>
-                <span class="quota-badge">Live · ${agoStr}</span>
-            </div>
-            <div class="quota-grid">${modelBars}</div>
-        </div>`;
-
-            } else if (todayLog && todayLog.events > 0) {
-                const tokens = todayLog.tokens;
-                const LIMITS = [
-                    { name: 'Gemini 2.5 Pro', limit: 1_048_576, color: '#4f8ef7' },
-                    { name: 'Claude Sonnet',  limit: 200_000,   color: '#f59e0b' },
-                    { name: 'GPT-4o',         limit: 128_000,   color: '#22d3ee' },
-                ];
-                const modelBars = LIMITS.map(m => {
-                    const pct = Math.min(100, (tokens / m.limit) * 100);
-                    const limitStr = m.limit >= 1_000_000 ? `${(m.limit/1_000_000).toFixed(1)}M` : `${(m.limit/1_000).toFixed(0)}K`;
-                    return `
-                    <div class="quota-row">
-                        <div class="quota-model">${m.name}</div>
-                        <div class="quota-bar-wrap">
-                            <div class="quota-bar-fill" style="width:${pct}%;background:${m.color};"></div>
-                        </div>
-                        <div class="quota-pct" style="color:${m.color};">${pct.toFixed(pct<1?2:1)}%<span style="color:var(--text-3);font-size:9px;font-weight:400;">/${limitStr}</span></div>
-                    </div>`;
-                }).join('');
-                return `
-        <div class="quota-card">
-            <div class="quota-header">
-                <span class="quota-title">📡 Token Hôm Nay (ước tính)</span>
-                <span class="quota-badge">${formatTokenCount(tokens)} · ${todayLog.events} events</span>
-            </div>
-            <div class="quota-grid">${modelBars}</div>
-        </div>`;
-            } else {
-                return `
-        <div class="quota-card" style="opacity:0.5;">
-            <div class="quota-header">
-                <span class="quota-title">📡 Quota</span>
-            </div>
-            <div class="quota-empty">Đang tải dữ liệu quota từ Antigravity API...</div>
-        </div>`;
-            }
-        })()}
-
-        <!-- Stats row -->
-        <div class="stats-row">
-            ${pbData ? `
-            <div class="stat-card pb-card">
-                <div class="pb-icon">🔤</div>
-                <div>
-                    <div class="stat-label">Auto-Track (PB phiên này)</div>
-                    <div class="stat-value" style="color:var(--purple);font-size:22px;">+${pbData.totalDeltaKB.toFixed(1)} KB</div>
-                    <div class="stat-sub">~${formatTokenCount(pbData.totalEstimatedTokens)} tokens · ${pbData.activeConversations} conv.</div>
-                </div>
-            </div>` : ''}
-            <div class="stat-card blue">
-                <div class="stat-label">↑ Input Today</div>
-                <div class="stat-value">${formatTokenCount(currentTotals.input)}</div>
-                <div class="stat-sub">${currentTotals.input.toLocaleString()} tokens</div>
-            </div>
-            <div class="stat-card green">
-                <div class="stat-label">↓ Output Today</div>
-                <div class="stat-value">${formatTokenCount(currentTotals.output)}</div>
-                <div class="stat-sub">${currentTotals.output.toLocaleString()} tokens</div>
-            </div>
-            <div class="stat-card purple">
-                <div class="stat-label">∑ Total Today</div>
-                <div class="stat-value">${formatTokenCount(currentTotals.total)}</div>
-                <div class="stat-sub">${currentTotals.total.toLocaleString()} tokens</div>
-            </div>
-            <div class="stat-card amber">
-                <div class="stat-label">🏆 All Time</div>
-                <div class="stat-value">${formatTokenCount(allTimeTotals.total)}</div>
-                <div class="stat-sub">${allTimeTotals.input.toLocaleString()} ↑ / ${allTimeTotals.output.toLocaleString()} ↓</div>
-            </div>
+        <!-- Stats Row Container -->
+        <div id="stats-row-container" class="stats-row">
+            ${statsRowHtml}
         </div>
 
         <!-- Chart -->
@@ -750,7 +873,9 @@ export class DashboardPanel {
                                 <th>Description</th>
                             </tr>
                         </thead>
-                        <tbody>${entriesHtml}</tbody>
+                        <tbody id="entries-tbody">
+                            ${entriesTbodyHtml}
+                        </tbody>
                     </table>
                 </div>
             </div>
@@ -767,62 +892,16 @@ export class DashboardPanel {
                                 <th class="num">Entries</th>
                             </tr>
                         </thead>
-                        <tbody>${sessionRows || '<tr><td colspan="5" class="empty">No session history yet.</td></tr>'}</tbody>
+                        <tbody id="history-tbody">
+                            ${historyTbodyHtml}
+                        </tbody>
                     </table>
                 </div>
             </div>
 
             <div id="tab-conversions" class="tab-pane">
-                ${conversionStats && conversionStats.totalEvents > 0 ? `
-                <div class="mini-stats">
-                    <div class="mini-stat">
-                        <div class="mini-stat-label">Events</div>
-                        <div class="mini-stat-value" style="color:var(--blue);">${conversionStats.totalEvents}</div>
-                    </div>
-                    <div class="mini-stat">
-                        <div class="mini-stat-label">ΔKB</div>
-                        <div class="mini-stat-value" style="color:var(--green);">${conversionStats.totalDeltaKB.toFixed(1)}</div>
-                    </div>
-                    <div class="mini-stat">
-                        <div class="mini-stat-label">Tokens</div>
-                        <div class="mini-stat-value" style="color:var(--purple);font-size:15px;">${conversionStats.totalEstimatedTokens.toLocaleString()}</div>
-                    </div>
-                    <div class="mini-stat">
-                        <div class="mini-stat-label">Avg KB/ev</div>
-                        <div class="mini-stat-value" style="color:var(--amber);">${conversionStats.avgDeltaKBPerEvent.toFixed(1)}</div>
-                    </div>
-                    <div class="mini-stat">
-                        <div class="mini-stat-label">Conv.</div>
-                        <div class="mini-stat-value">${conversionStats.uniqueConversations}</div>
-                    </div>
-                </div>` : ''}
-                <div class="tbl-wrap">
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>Time</th>
-                                <th>Conv. ID</th>
-                                <th class="num">ΔKB</th>
-                                <th class="num">Est. Tokens</th>
-                                <th class="num">Tok/KB</th>
-                                <th class="num">PB Total KB</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            ${conversionEntries.length === 0
-                                ? '<tr><td colspan="6" class="empty">No conversion events yet.</td></tr>'
-                                : [...conversionEntries].reverse().map(e => `
-                                <tr>
-                                    <td>${new Date(e.ts).toLocaleTimeString()}</td>
-                                    <td><span class="badge badge-antigravity">${e.convId.substring(0, 8)}…</span></td>
-                                    <td class="num">+${e.deltaKB.toFixed(1)}</td>
-                                    <td class="num">${e.estimatedTokens.toLocaleString()}</td>
-                                    <td class="num">${e.tokensPerKB}</td>
-                                    <td class="num">${e.pbTotalKB.toFixed(1)}</td>
-                                </tr>`).join('')
-                            }
-                        </tbody>
-                    </table>
+                <div id="conversions-container">
+                    ${conversionsHtml}
                 </div>
             </div>
         </div>
@@ -848,14 +927,14 @@ export class DashboardPanel {
     // Chart
     const ctx = document.getElementById('usageChart');
     if (ctx) {
-        new Chart(ctx, {
+        window.usageChart = new Chart(ctx, {
             type: 'bar',
             data: {
-                labels: ${chartLabels},
+                labels: ${chartLabelsStr},
                 datasets: [
                     {
                         label: 'Input',
-                        data: ${chartInputData},
+                        data: ${chartInputDataStr},
                         backgroundColor: 'rgba(79,142,247,0.45)',
                         borderColor: 'rgba(79,142,247,0.85)',
                         borderWidth: 1,
@@ -863,7 +942,7 @@ export class DashboardPanel {
                     },
                     {
                         label: 'Output',
-                        data: ${chartOutputData},
+                        data: ${chartOutputDataStr},
                         backgroundColor: 'rgba(52,211,153,0.45)',
                         borderColor: 'rgba(52,211,153,0.85)',
                         borderWidth: 1,
@@ -895,6 +974,41 @@ export class DashboardPanel {
             }
         });
     }
+
+    // Handle incoming messages from the extension (Dynamic Updates)
+    window.addEventListener('message', event => {
+        const message = event.data;
+        if (message.command === 'update') {
+            if (message.quotaCardHtml !== undefined) {
+                const el = document.getElementById('quota-card-container');
+                if (el) el.innerHTML = message.quotaCardHtml;
+            }
+            if (message.statsRowHtml !== undefined) {
+                const el = document.getElementById('stats-row-container');
+                if (el) el.innerHTML = message.statsRowHtml;
+            }
+            if (message.entriesTbodyHtml !== undefined) {
+                const el = document.getElementById('entries-tbody');
+                if (el) el.innerHTML = message.entriesTbodyHtml;
+            }
+            if (message.historyTbodyHtml !== undefined) {
+                const el = document.getElementById('history-tbody');
+                if (el) el.innerHTML = message.historyTbodyHtml;
+            }
+            if (message.conversionsHtml !== undefined) {
+                const el = document.getElementById('conversions-container');
+                if (el) el.innerHTML = message.conversionsHtml;
+            }
+
+            // Update Chart.js data smoothly
+            if (window.usageChart && message.chartLabels && message.chartInputData && message.chartOutputData) {
+                window.usageChart.data.labels = message.chartLabels;
+                window.usageChart.data.datasets[0].data = message.chartInputData;
+                window.usageChart.data.datasets[1].data = message.chartOutputData;
+                window.usageChart.update();
+            }
+        }
+    });
 </script>
 </body>
 </html>`;
