@@ -48,12 +48,14 @@ async function safeGetFileSize(filePath: string): Promise<number | null> {
 export class PbWatcher implements vscode.Disposable {
     private readonly conversationsDir: string;
     private fileSizes: Map<string, number> = new Map();
+    private conversationTypes: Map<string, 'protobuf' | 'sqlite'> = new Map();
     private pollingTimer: NodeJS.Timeout | undefined;
     private disposed = false;
     private isChecking = false; // Prevent overlapping checks
 
     // Accumulated tracking data for current session
     private totalDeltaBytes = 0;
+    private totalEstimatedTokens = 0;
     private activeConversationIds = new Set<string>();
     private lastUpdateTime = 0;
 
@@ -64,11 +66,11 @@ export class PbWatcher implements vscode.Disposable {
     public readonly onTrackingUpdate = this.onTrackingUpdateEmitter.event;
 
     constructor() {
-        // Antigravity (new versions) stores conversations at ~/.gemini/antigravity-ide/conversations/
+        // Antigravity stores conversations at ~/.gemini/antigravity-ide/conversations/
         this.conversationsDir = path.join(os.homedir(), '.gemini', 'antigravity-ide', 'conversations');
     }
 
-    /** Start watching for .pb file changes */
+    /** Start watching for conversation file changes */
     public async start(): Promise<void> {
         try {
             await fs.promises.access(this.conversationsDir, fs.constants.R_OK);
@@ -88,26 +90,68 @@ export class PbWatcher implements vscode.Disposable {
         console.log(`[PbWatcher] Started monitoring ${this.conversationsDir} (interval: ${intervalMs}ms)`);
     }
 
-    /** Take a snapshot of all .pb file sizes (async, non-blocking) */
+    /** Take a snapshot of all conversation file sizes (async, non-blocking) */
     private async snapshotAllFiles(): Promise<void> {
         try {
             const files = await fs.promises.readdir(this.conversationsDir);
+            this.conversationTypes.clear();
+            this.fileSizes.clear();
+
             for (const file of files) {
+                let id = '';
+                let type: 'protobuf' | 'sqlite' | null = null;
+
                 if (file.endsWith('.pb')) {
-                    const fullPath = path.join(this.conversationsDir, file);
-                    const size = await safeGetFileSize(fullPath);
+                    id = file.replace('.pb', '');
+                    type = 'protobuf';
+                } else if (file.endsWith('.db')) {
+                    id = file.replace('.db', '');
+                    type = 'sqlite';
+                }
+
+                if (type && id) {
+                    this.conversationTypes.set(id, type);
+                    const size = await this.getConversationSize(id, type);
                     if (size !== null) {
-                        this.fileSizes.set(file, size);
+                        this.fileSizes.set(id, size);
                     }
                 }
             }
-            console.log(`[PbWatcher] Initial snapshot: ${this.fileSizes.size} conversation files`);
+            console.log(`[PbWatcher] Initial snapshot: ${this.fileSizes.size} active conversation files`);
         } catch (err) {
             console.error(`[PbWatcher] Error reading conversations directory:`, err);
         }
     }
 
-    /** Check all .pb files for size changes (async, non-blocking) */
+    /** Get total size of a conversation based on its type */
+    private async getConversationSize(id: string, type: 'protobuf' | 'sqlite'): Promise<number | null> {
+        if (type === 'protobuf') {
+            const filePath = path.join(this.conversationsDir, `${id}.pb`);
+            return await safeGetFileSize(filePath);
+        } else {
+            const dbPath = path.join(this.conversationsDir, `${id}.db`);
+            const walPath = path.join(this.conversationsDir, `${id}.db-wal`);
+
+            const dbSize = await safeGetFileSize(dbPath);
+            if (dbSize === null) {
+                return null;
+            }
+
+            let walSize = 0;
+            try {
+                const size = await safeGetFileSize(walPath);
+                if (size !== null) {
+                    walSize = size;
+                }
+            } catch {
+                // Ignore WAL read errors
+            }
+
+            return dbSize + walSize;
+        }
+    }
+
+    /** Check all files for size changes (async, non-blocking) */
     private async checkForChanges(): Promise<void> {
         if (this.disposed || this.isChecking) { return; }
         this.isChecking = true;
@@ -116,32 +160,66 @@ export class PbWatcher implements vscode.Disposable {
             const files = await fs.promises.readdir(this.conversationsDir);
             const config = vscode.workspace.getConfiguration('tokenCount');
             const tokensPerKB = config.get<number>('tokensPerKB', 256);
+            const tokensPerKBSqlite = config.get<number>('tokensPerKBSqlite', 6);
 
+            // Update conversation types map from current files list
+            const currentIds = new Set<string>();
             for (const file of files) {
-                if (!file.endsWith('.pb')) { continue; }
+                let id = '';
+                let type: 'protobuf' | 'sqlite' | null = null;
 
-                const fullPath = path.join(this.conversationsDir, file);
-                const currentSize = await safeGetFileSize(fullPath);
+                if (file.endsWith('.pb')) {
+                    id = file.replace('.pb', '');
+                    type = 'protobuf';
+                } else if (file.endsWith('.db')) {
+                    id = file.replace('.db', '');
+                    type = 'sqlite';
+                }
 
+                if (type && id) {
+                    this.conversationTypes.set(id, type);
+                    currentIds.add(id);
+                }
+            }
+
+            // Cleanup deleted conversations
+            for (const id of Array.from(this.conversationTypes.keys())) {
+                if (!currentIds.has(id)) {
+                    this.fileSizes.delete(id);
+                    this.conversationTypes.delete(id);
+                }
+            }
+
+            for (const [id, type] of this.conversationTypes.entries()) {
+                const currentSize = await this.getConversationSize(id, type);
                 if (currentSize === null) {
                     continue; // File locked or inaccessible, skip silently
                 }
 
-                const previousSize = this.fileSizes.get(file) ?? 0;
+                const previousSize = this.fileSizes.get(id) ?? 0;
+                
+                // If previousSize is 0, it means it's a newly detected conversation file.
+                // We set the baseline and skip delta detection to avoid giant initial spikes.
+                if (previousSize === 0) {
+                    this.fileSizes.set(id, currentSize);
+                    continue;
+                }
+
                 const deltaBytes = currentSize - previousSize;
 
                 // Only emit if there's a meaningful change (> 100 bytes to avoid noise)
                 if (deltaBytes > 100) {
                     const deltaKB = deltaBytes / 1024;
-                    const estimatedTokens = Math.round(deltaKB * tokensPerKB);
-                    const conversationId = file.replace('.pb', '');
+                    const rate = type === 'sqlite' ? tokensPerKBSqlite : tokensPerKB;
+                    const estimatedTokens = Math.round(deltaKB * rate);
 
                     this.totalDeltaBytes += deltaBytes;
-                    this.activeConversationIds.add(conversationId);
+                    this.totalEstimatedTokens += estimatedTokens;
+                    this.activeConversationIds.add(id);
                     this.lastUpdateTime = Date.now();
 
                     const event: PbDeltaEvent = {
-                        conversationId,
+                        conversationId: id,
                         deltaBytes,
                         deltaKB: Math.round(deltaKB * 10) / 10,
                         estimatedTokens,
@@ -150,11 +228,11 @@ export class PbWatcher implements vscode.Disposable {
                     };
 
                     this.onDeltaDetectedEmitter.fire(event);
-                    this.emitTrackingUpdate(tokensPerKB);
+                    this.emitTrackingUpdate();
                 }
 
-                // Always update the known size (if we could read it)
-                this.fileSizes.set(file, currentSize);
+                // Always update the known size
+                this.fileSizes.set(id, currentSize);
             }
         } catch {
             // Directory might not exist or be inaccessible - silently ignore
@@ -164,11 +242,11 @@ export class PbWatcher implements vscode.Disposable {
     }
 
     /** Emit aggregated tracking update */
-    private emitTrackingUpdate(tokensPerKB: number): void {
+    private emitTrackingUpdate(): void {
         const totalDeltaKB = Math.round((this.totalDeltaBytes / 1024) * 10) / 10;
         const data: PbTrackingData = {
             totalDeltaKB,
-            totalEstimatedTokens: Math.round(totalDeltaKB * tokensPerKB),
+            totalEstimatedTokens: this.totalEstimatedTokens,
             activeConversations: this.activeConversationIds.size,
             lastUpdate: this.lastUpdateTime,
         };
@@ -177,13 +255,11 @@ export class PbWatcher implements vscode.Disposable {
 
     /** Get current tracking data */
     public getTrackingData(): PbTrackingData {
-        const config = vscode.workspace.getConfiguration('tokenCount');
-        const tokensPerKB = config.get<number>('tokensPerKB', 256);
         const totalDeltaKB = Math.round((this.totalDeltaBytes / 1024) * 10) / 10;
 
         return {
             totalDeltaKB,
-            totalEstimatedTokens: Math.round(totalDeltaKB * tokensPerKB),
+            totalEstimatedTokens: this.totalEstimatedTokens,
             activeConversations: this.activeConversationIds.size,
             lastUpdate: this.lastUpdateTime,
         };
@@ -192,15 +268,13 @@ export class PbWatcher implements vscode.Disposable {
     /** Reset session tracking data */
     public async resetTracking(): Promise<void> {
         this.totalDeltaBytes = 0;
+        this.totalEstimatedTokens = 0;
         this.activeConversationIds.clear();
         this.lastUpdateTime = 0;
 
         // Re-snapshot to reset baselines
         await this.snapshotAllFiles();
-
-        const config = vscode.workspace.getConfiguration('tokenCount');
-        const tokensPerKB = config.get<number>('tokensPerKB', 256);
-        this.emitTrackingUpdate(tokensPerKB);
+        this.emitTrackingUpdate();
     }
 
     public dispose(): void {
