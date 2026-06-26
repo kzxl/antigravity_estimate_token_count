@@ -28,7 +28,7 @@ A VS Code extension that **automatically estimates token usage** from [Google An
 
 ```bash
 # From VSIX file
-code --install-extension ai-token-counter-1.0.0.vsix
+code --install-extension ai-token-counter-1.2.4.vsix
 ```
 
 Or in VS Code: `Ctrl+Shift+P` → `Extensions: Install from VSIX...`
@@ -55,6 +55,7 @@ Or in VS Code: `Ctrl+Shift+P` → `Extensions: Install from VSIX...`
 | `tokenCount.showInStatusBar` | `true` | Show/hide status bar item |
 | `tokenCount.statusBarAlignment` | `right` | Status bar position (left/right) |
 | `tokenCount.autoNewSessionDaily` | `true` | Auto-create new session daily |
+| `tokenCount.dailyTokenLimit` | `1000000` | Daily token limit used for displaying the estimated token usage progress bar on the dashboard |
 
 ## 🔍 How Auto-Tracking Works
 
