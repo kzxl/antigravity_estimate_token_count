@@ -57,6 +57,12 @@ export class StatusBarManager {
             })
         );
 
+        // Poll for updates from other windows/services every 5 seconds
+        const pollTimer = setInterval(() => {
+            this.update();
+        }, 5000);
+        this.disposables.push(new vscode.Disposable(() => clearInterval(pollTimer)));
+
         this.update();
         this.updateVisibility();
     }

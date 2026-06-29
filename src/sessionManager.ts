@@ -89,6 +89,7 @@ export class SessionManager {
 
     /** Get the current session */
     public getCurrentSession(): TokenSession | undefined {
+        this.load();
         const config = vscode.workspace.getConfiguration('tokenCount');
         if (config.get<boolean>('autoNewSessionDaily', true)) {
             this.ensureTodaySession();
@@ -98,6 +99,7 @@ export class SessionManager {
 
     /** Get all sessions */
     public getAllSessions(): TokenSession[] {
+        this.load();
         return [...this.sessions];
     }
 
@@ -132,6 +134,7 @@ export class SessionManager {
 
     /** Get totals for the current session */
     public getCurrentTotals(): { input: number; output: number; total: number } {
+        this.load();
         const session = this.getCurrentSession();
         if (!session) {
             return { input: 0, output: 0, total: 0 };
@@ -145,6 +148,7 @@ export class SessionManager {
 
     /** Get all-time totals */
     public getAllTimeTotals(): { input: number; output: number; total: number } {
+        this.load();
         let input = 0;
         let output = 0;
         for (const session of this.sessions) {
@@ -177,6 +181,7 @@ export class SessionManager {
 
     /** Export all data as JSON string */
     public exportAsJson(pbTrackingData?: { totalDeltaKB: number; totalEstimatedTokens: number; activeConversations: number }): string {
+        this.load();
         const data: Record<string, unknown> = {
             exportDate: new Date().toISOString(),
             sessions: this.sessions,
