@@ -2,8 +2,12 @@
   "name": "ai-token-counter",
   "displayName": "AI Token Counter",
   "description": "Track and count AI tokens used with Copilot, Antigravity, and other AI assistants",
-  "version": "1.2.4",
+  "version": "1.2.5",
   "publisher": "phongvo",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kzxl/antigravity_estimate_token_count.git"
+  },
   "engines": {
     "vscode": "^1.85.0"
   },
