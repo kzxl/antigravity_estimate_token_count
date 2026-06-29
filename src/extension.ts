@@ -222,6 +222,73 @@ export function activate(context: vscode.ExtensionContext) {
         })
     );
 
+    // Command: Calibrate Rate
+    context.subscriptions.push(
+        vscode.commands.registerCommand('tokenCount.calibrateRate', async () => {
+            let text = '';
+            const editor = vscode.window.activeTextEditor;
+            if (editor && !editor.selection.isEmpty) {
+                text = editor.document.getText(editor.selection);
+            } else {
+                text = await vscode.env.clipboard.readText();
+            }
+
+            if (!text || text.trim().length === 0) {
+                vscode.window.showErrorMessage('Không tìm thấy văn bản để tính toán. Vui lòng bôi đen đoạn chat hoặc copy vào Clipboard trước.');
+                return;
+            }
+
+            // Chọn định dạng file để hiệu chuẩn
+            const formatOption = await vscode.window.showQuickPick(
+                [
+                    { label: 'Protobuf (.pb)', value: 'pb', description: 'Cấu hình tokenCount.tokensPerKB (mặc định: 256)' },
+                    { label: 'SQLite (.db + .db-wal)', value: 'sqlite', description: 'Cấu hình tokenCount.tokensPerKBSqlite (mặc định: 6)' }
+                ],
+                { placeHolder: 'Chọn định dạng file cần hiệu chuẩn' }
+            );
+
+            if (!formatOption) { return; }
+
+            // Nhập dung lượng thực tế
+            const sizeStr = await vscode.window.showInputBox({
+                prompt: `Nhập dung lượng file thực tế (hoặc phần tăng thêm) bằng KB của định dạng ${formatOption.label}`,
+                placeHolder: 'Ví dụ: 150 (cho 150 KB), 1024 (cho 1 MB)',
+                validateInput: (v) => {
+                    if (!v || isNaN(Number(v)) || Number(v) <= 0) {
+                        return 'Vui lòng nhập một số dương đại diện cho dung lượng (KB)';
+                    }
+                    return null;
+                }
+            });
+
+            if (sizeStr === undefined) { return; }
+            const sizeKB = Number(sizeStr);
+
+            // Tính toán số token và tỷ lệ mới
+            const tokenCount = countTokens(text);
+            const calculatedRate = Math.round((tokenCount / sizeKB) * 100) / 100;
+            
+            const pbConfig = vscode.workspace.getConfiguration('tokenCount');
+            const settingKey = formatOption.value === 'pb' ? 'tokensPerKB' : 'tokensPerKBSqlite';
+            const currentRate = pbConfig.get<number>(settingKey, formatOption.value === 'pb' ? 256 : 6);
+
+            const confirm = await vscode.window.showInformationMessage(
+                `Kết quả hiệu chuẩn:\n` +
+                `- Số token thực tế: ${tokenCount.toLocaleString()} tokens (đoạn text dài ${text.length} ký tự)\n` +
+                `- Dung lượng file: ${sizeKB.toLocaleString()} KB\n` +
+                `- Tỷ lệ mới tính toán: ${calculatedRate} tokens/KB (Tỷ lệ hiện tại: ${currentRate} tokens/KB)\n\n` +
+                `Bạn có muốn áp dụng tỷ lệ mới này vào cài đặt "${settingKey}" không?`,
+                { modal: true },
+                'Cập nhật'
+            );
+
+            if (confirm === 'Cập nhật') {
+                await pbConfig.update(settingKey, calculatedRate, vscode.ConfigurationTarget.Global);
+                vscode.window.showInformationMessage(`Đã cập nhật cấu hình ${settingKey} thành ${calculatedRate} tokens/KB.`);
+            }
+        })
+    );
+
     // Log activation
     const outputChannel = vscode.window.createOutputChannel('AI Token Counter');
     outputChannel.appendLine(`AI Token Counter activated at ${new Date().toISOString()}`);

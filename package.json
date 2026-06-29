@@ -49,6 +49,10 @@
       {
         "command": "tokenCount.exportData",
         "title": "Token Count: Export Data (JSON)"
+      },
+      {
+        "command": "tokenCount.calibrateRate",
+        "title": "Token Count: Calibrate Rate"
       }
     ],
     "keybindings": [
